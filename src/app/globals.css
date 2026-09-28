@@ -1,26 +1,108 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --bg-cinema: #08090B;
+  --bg-secondary: #111318;
+  --bg-card: #151820;
+  --bg-card-hover: #1c202a;
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-subtle-hover: rgba(255, 255, 255, 0.16);
+  --accent: #FF5733;
+  --accent-glow: rgba(255, 87, 51, 0.25);
+  --accent-hover: #ff6e4d;
+  --text-primary: #FFFFFF;
+  --text-secondary: #A7ABB5;
+  --text-muted: #6B7280;
+  --status-online: #10B981;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background-color: var(--bg-cinema);
+  color: var(--text-primary);
+  font-family: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  overflow-x: hidden;
+  min-height: 100vh;
+}
+
+/* Custom minimal scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+/* Animations for floating reactions */
+@keyframes floatReaction {
+  0% {
+    opacity: 0;
+    transform: translateY(0px) scale(0.6) rotate(0deg);
+  }
+  15% {
+    opacity: 1;
+    transform: translateY(-20px) scale(1.15) rotate(-6deg);
+  }
+  50% {
+    opacity: 0.95;
+    transform: translateY(-90px) scale(1) rotate(6deg);
+  }
+  85% {
+    opacity: 0.6;
+    transform: translateY(-160px) scale(0.9) rotate(-3deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-220px) scale(0.7) rotate(0deg);
+  }
+}
+
+.reaction-bubble {
+  animation: floatReaction 2.4s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+  pointer-events: none;
+  position: absolute;
+  z-index: 50;
+  user-select: none;
+}
+
+/* Speaking pulse */
+@keyframes speakingPulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 87, 51, 0.6);
+  }
+  70% {
+    box-shadow: 0 0 0 8px rgba(255, 87, 51, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 87, 51, 0);
+  }
+}
+
+.speaking-ring {
+  animation: speakingPulse 1.6s infinite;
+}
+
+/* Subtle backdrop blur */
+.glass-panel {
+  background: rgba(21, 24, 32, 0.75);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border-subtle);
+}
+
+.glass-toolbar {
+  background: rgba(17, 19, 24, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border-subtle);
 }
