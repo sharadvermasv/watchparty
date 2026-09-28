@@ -40,7 +40,7 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
   const [connectionStatus, setConnectionStatus] = useState<"connecting" | "connected" | "error">("connecting");
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Stable refs to prevent callback recreate loops
+  // Stable references
   const currentUserRef = useRef<UserSession | null>(null);
   currentUserRef.current = currentUser;
 
@@ -50,7 +50,18 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
   const watchStateRef = useRef<WatchState>(watchState);
   watchStateRef.current = watchState;
 
+  const participantsRef = useRef<Participant[]>(participants);
+  participantsRef.current = participants;
+
+  const queueRef = useRef<QueueItem[]>(queue);
+  queueRef.current = queue;
+
   const broadcastChannelRef = useRef<BroadcastChannel | null>(null);
+
+  // PeerJS WebRTC P2P Data Connections across the internet
+  const peerInstanceRef = useRef<any>(null);
+  const hostConnectionRef = useRef<any>(null);
+  const guestConnectionsRef = useRef<Map<string, any>>(new Map());
 
   const isHost = Boolean(room && currentUser && room.host_id === currentUser.userId);
 
@@ -75,234 +86,490 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
     }, 2500);
   }, []);
 
-  // Update participant state (mic, cam, speaking, sharing)
-  const updateMyParticipantStatus = useCallback((updates: Partial<Participant>) => {
-    const user = currentUserRef.current;
-    const currentRoom = roomRef.current;
-    if (!user || !currentRoom) return;
+  // Universal broadcaster: broadcasts to PeerJS peers, BroadcastChannel, and Supabase
+  const broadcastNetworkMessage = useCallback((payload: any) => {
+    // 1. Send via local BroadcastChannel (same machine tabs)
+    try {
+      broadcastChannelRef.current?.postMessage(payload);
+    } catch {}
 
-    setParticipants((prev) =>
-      prev.map((p) => (p.user_id === user.userId ? { ...p, ...updates, last_seen: new Date().toISOString() } : p))
-    );
-
-    if (isSupabaseConfigured) {
-      const supabase = getSupabaseClient();
-      if (supabase) {
-        supabase
-          .from("participants")
-          .update(updates)
-          .eq("room_id", currentRoom.id)
-          .eq("user_id", user.userId)
-          .then();
-      }
-    } else if (broadcastChannelRef.current) {
-      broadcastChannelRef.current.postMessage({
-        type: "PARTICIPANT_UPDATE",
-        userId: user.userId,
-        updates,
+    // 2. Send via PeerJS WebRTC (across the internet to other laptops)
+    if (hostConnectionRef.current && hostConnectionRef.current.open) {
+      // We are guest -> send to host
+      try {
+        hostConnectionRef.current.send(payload);
+      } catch {}
+    } else {
+      // We are host -> send to all connected guests
+      guestConnectionsRef.current.forEach((conn) => {
+        if (conn && conn.open) {
+          try {
+            conn.send(payload);
+          } catch {}
+        }
       });
     }
   }, []);
 
-  // Host update watch state
-  const updateWatchState = useCallback((updates: Partial<WatchState>) => {
-    const currentRoom = roomRef.current;
-    const user = currentUserRef.current;
-    if (!currentRoom || !user) return;
+  // Handle incoming data payload (from PeerJS or BroadcastChannel)
+  const handleNetworkData = useCallback(
+    (data: any, fromConnection?: any) => {
+      if (!data || !data.type) return;
 
-    setWatchState((prev) => {
-      const nextState: WatchState = {
-        ...prev,
-        ...updates,
-        room_id: currentRoom.id,
-        updated_at: new Date().toISOString(),
-        updated_by: user.userId,
+      switch (data.type) {
+        case "HELLO": {
+          const newP: Participant = data.participant;
+          if (!newP) break;
+          setParticipants((prev) => {
+            const exists = prev.find((p) => p.user_id === newP.user_id);
+            if (exists) return prev;
+            showToast(`${newP.display_name} joined the room`);
+            return [...prev, newP];
+          });
+
+          // Reply with welcome packet
+          const welcomePacket = {
+            type: "WELCOME",
+            participant: currentUserRef.current,
+            room: roomRef.current,
+            watchState: watchStateRef.current,
+            queue: queueRef.current,
+            participants: participantsRef.current,
+          };
+
+          if (fromConnection && fromConnection.open) {
+            fromConnection.send(welcomePacket);
+          } else {
+            broadcastNetworkMessage(welcomePacket);
+          }
+
+          // If host received from guest, fan-out to all other guests
+          if (fromConnection) {
+            guestConnectionsRef.current.forEach((conn) => {
+              if (conn !== fromConnection && conn.open) {
+                try {
+                  conn.send(data);
+                } catch {}
+              }
+            });
+          }
+          break;
+        }
+
+        case "WELCOME": {
+          if (data.participant) {
+            setParticipants((prev) => {
+              if (prev.some((p) => p.user_id === data.participant.user_id)) return prev;
+              return [...prev, data.participant];
+            });
+          }
+          if (Array.isArray(data.participants)) {
+            setParticipants((prev) => {
+              const map = new Map();
+              prev.forEach((p) => map.set(p.user_id, p));
+              data.participants.forEach((p: Participant) => map.set(p.user_id, p));
+              return Array.from(map.values());
+            });
+          }
+          if (data.watchState && data.watchState.updated_at) {
+            setWatchState((cur) => {
+              if (new Date(data.watchState.updated_at) >= new Date(cur.updated_at)) {
+                watchStateRef.current = data.watchState;
+                return data.watchState;
+              }
+              return cur;
+            });
+          }
+          if (data.queue && Array.isArray(data.queue)) {
+            setQueue(data.queue);
+          }
+          break;
+        }
+
+        case "PARTICIPANT_UPDATE": {
+          setParticipants((prev) =>
+            prev.map((p) => (p.user_id === data.userId ? { ...p, ...data.updates } : p))
+          );
+          if (fromConnection) {
+            guestConnectionsRef.current.forEach((conn) => {
+              if (conn !== fromConnection && conn.open) {
+                try {
+                  conn.send(data);
+                } catch {}
+              }
+            });
+          }
+          break;
+        }
+
+        case "WATCH_STATE_UPDATE": {
+          setWatchState(data.watchState);
+          watchStateRef.current = data.watchState;
+          if (fromConnection) {
+            guestConnectionsRef.current.forEach((conn) => {
+              if (conn !== fromConnection && conn.open) {
+                try {
+                  conn.send(data);
+                } catch {}
+              }
+            });
+          }
+          break;
+        }
+
+        case "QUEUE_ADD": {
+          setQueue((prev) => {
+            if (prev.some((i) => i.id === data.item.id)) return prev;
+            return [...prev, data.item];
+          });
+          if (fromConnection) {
+            guestConnectionsRef.current.forEach((conn) => {
+              if (conn !== fromConnection && conn.open) {
+                try {
+                  conn.send(data);
+                } catch {}
+              }
+            });
+          }
+          break;
+        }
+
+        case "QUEUE_REMOVE": {
+          setQueue((prev) => prev.filter((i) => i.id !== data.itemId));
+          if (fromConnection) {
+            guestConnectionsRef.current.forEach((conn) => {
+              if (conn !== fromConnection && conn.open) {
+                try {
+                  conn.send(data);
+                } catch {}
+              }
+            });
+          }
+          break;
+        }
+
+        case "NEW_MESSAGE": {
+          setMessages((prev) => [...prev, data.message]);
+          if (fromConnection) {
+            guestConnectionsRef.current.forEach((conn) => {
+              if (conn !== fromConnection && conn.open) {
+                try {
+                  conn.send(data);
+                } catch {}
+              }
+            });
+          }
+          break;
+        }
+
+        case "REACTION": {
+          triggerReactionAnimation(data.emoji, data.senderName);
+          if (fromConnection) {
+            guestConnectionsRef.current.forEach((conn) => {
+              if (conn !== fromConnection && conn.open) {
+                try {
+                  conn.send(data);
+                } catch {}
+              }
+            });
+          }
+          break;
+        }
+
+        case "HOST_TRANSFER": {
+          setRoom((prev) => (prev ? { ...prev, host_id: data.newHostId } : null));
+          break;
+        }
+
+        case "GOODBYE": {
+          setParticipants((prev) => {
+            const departing = prev.find((p) => p.user_id === data.userId);
+            if (departing) {
+              showToast(`${departing.display_name} left the room`);
+            }
+            const remaining = prev.filter((p) => p.user_id !== data.userId);
+
+            setRoom((currentRoom) => {
+              if (currentRoom && currentRoom.host_id === data.userId && remaining.length > 0) {
+                const newHost = remaining[0];
+                showToast(`${newHost.display_name} is now the host`);
+                return { ...currentRoom, host_id: newHost.user_id };
+              }
+              return currentRoom;
+            });
+
+            return remaining;
+          });
+          break;
+        }
+      }
+    },
+    [showToast, triggerReactionAnimation, broadcastNetworkMessage]
+  );
+
+  // Update participant state (mic, cam, speaking, sharing)
+  const updateMyParticipantStatus = useCallback(
+    (updates: Partial<Participant>) => {
+      const user = currentUserRef.current;
+      const currentRoom = roomRef.current;
+      if (!user || !currentRoom) return;
+
+      setParticipants((prev) =>
+        prev.map((p) => (p.user_id === user.userId ? { ...p, ...updates, last_seen: new Date().toISOString() } : p))
+      );
+
+      const payload = {
+        type: "PARTICIPANT_UPDATE",
+        userId: user.userId,
+        updates,
       };
+
+      broadcastNetworkMessage(payload);
 
       if (isSupabaseConfigured) {
         const supabase = getSupabaseClient();
         if (supabase) {
           supabase
-            .from("watch_state")
-            .upsert(nextState)
+            .from("participants")
+            .update(updates)
+            .eq("room_id", currentRoom.id)
+            .eq("user_id", user.userId)
             .then();
         }
-      } else if (broadcastChannelRef.current) {
-        broadcastChannelRef.current.postMessage({
+      }
+    },
+    [broadcastNetworkMessage]
+  );
+
+  // Host update watch state
+  const updateWatchState = useCallback(
+    (updates: Partial<WatchState>) => {
+      const currentRoom = roomRef.current;
+      const user = currentUserRef.current;
+      if (!currentRoom || !user) return;
+
+      setWatchState((prev) => {
+        const nextState: WatchState = {
+          ...prev,
+          ...updates,
+          room_id: currentRoom.id,
+          updated_at: new Date().toISOString(),
+          updated_by: user.userId,
+        };
+
+        const payload = {
           type: "WATCH_STATE_UPDATE",
           watchState: nextState,
-        });
+        };
+
+        broadcastNetworkMessage(payload);
+
         try {
           localStorage.setItem(`wp_state_${currentRoom.room_code}`, JSON.stringify(nextState));
         } catch {}
-      }
 
-      return nextState;
-    });
-  }, []);
+        if (isSupabaseConfigured) {
+          const supabase = getSupabaseClient();
+          if (supabase) {
+            supabase
+              .from("watch_state")
+              .upsert(nextState)
+              .then();
+          }
+        }
+
+        return nextState;
+      });
+    },
+    [broadcastNetworkMessage]
+  );
 
   // Add to Queue
-  const addToQueue = useCallback((url: string, title?: string) => {
-    const currentRoom = roomRef.current;
-    const user = currentUserRef.current;
-    if (!currentRoom || !user) return;
-    const videoId = parseYouTubeVideoId(url);
-    const resolvedTitle = title || (videoId ? `YouTube Video (${videoId})` : "Video Link");
-    const thumbnail = videoId ? `https://img.youtube.com/vi/${videoId}/hqdefault.jpg` : undefined;
+  const addToQueue = useCallback(
+    (url: string, title?: string) => {
+      const currentRoom = roomRef.current;
+      const user = currentUserRef.current;
+      if (!currentRoom || !user) return;
+      const videoId = parseYouTubeVideoId(url);
+      const resolvedTitle = title || (videoId ? `YouTube Video (${videoId})` : "Video Link");
+      const thumbnail = videoId ? `https://img.youtube.com/vi/${videoId}/hqdefault.jpg` : undefined;
 
-    setQueue((prev) => {
-      const newItem: QueueItem = {
-        id: "q_" + Math.random().toString(36).substring(2, 9),
-        room_id: currentRoom.id,
-        media_url: url,
-        title: resolvedTitle,
-        thumbnail,
-        added_by: user.displayName,
-        position: prev.length,
-        created_at: new Date().toISOString(),
-      };
+      setQueue((prev) => {
+        const newItem: QueueItem = {
+          id: "q_" + Math.random().toString(36).substring(2, 9),
+          room_id: currentRoom.id,
+          media_url: url,
+          title: resolvedTitle,
+          thumbnail,
+          added_by: user.displayName,
+          position: prev.length,
+          created_at: new Date().toISOString(),
+        };
 
-      if (isSupabaseConfigured) {
-        const supabase = getSupabaseClient();
-        if (supabase) {
-          supabase.from("queue").insert(newItem).then();
-        }
-      } else if (broadcastChannelRef.current) {
-        broadcastChannelRef.current.postMessage({
+        const payload = {
           type: "QUEUE_ADD",
           item: newItem,
-        });
+        };
+
+        broadcastNetworkMessage(payload);
+
         try {
           const stored = JSON.parse(localStorage.getItem(`wp_queue_${currentRoom.room_code}`) || "[]");
           localStorage.setItem(`wp_queue_${currentRoom.room_code}`, JSON.stringify([...stored, newItem]));
         } catch {}
-      }
 
-      return [...prev, newItem];
-    });
-  }, []);
-
-  // Remove from Queue
-  const removeFromQueue = useCallback((itemId: string) => {
-    const currentRoom = roomRef.current;
-    setQueue((prev) => {
-      const updated = prev.filter((i) => i.id !== itemId);
-      if (currentRoom) {
         if (isSupabaseConfigured) {
           const supabase = getSupabaseClient();
           if (supabase) {
-            supabase.from("queue").delete().eq("id", itemId).then();
+            supabase.from("queue").insert(newItem).then();
           }
-        } else if (broadcastChannelRef.current) {
-          broadcastChannelRef.current.postMessage({
+        }
+
+        return [...prev, newItem];
+      });
+    },
+    [broadcastNetworkMessage]
+  );
+
+  // Remove from Queue
+  const removeFromQueue = useCallback(
+    (itemId: string) => {
+      const currentRoom = roomRef.current;
+      setQueue((prev) => {
+        const updated = prev.filter((i) => i.id !== itemId);
+        if (currentRoom) {
+          const payload = {
             type: "QUEUE_REMOVE",
             itemId,
-          });
+          };
+
+          broadcastNetworkMessage(payload);
+
           try {
             localStorage.setItem(`wp_queue_${currentRoom.room_code}`, JSON.stringify(updated));
           } catch {}
+
+          if (isSupabaseConfigured) {
+            const supabase = getSupabaseClient();
+            if (supabase) {
+              supabase.from("queue").delete().eq("id", itemId).then();
+            }
+          }
         }
-      }
-      return updated;
-    });
-  }, []);
+        return updated;
+      });
+    },
+    [broadcastNetworkMessage]
+  );
 
   // Play Queue Item (Host only)
-  const playQueueItem = useCallback((item: QueueItem) => {
-    updateWatchState({
-      mode: "watch",
-      media_url: item.media_url,
-      media_title: item.title,
-      current_time: 0,
-      is_playing: true,
-    });
-    removeFromQueue(item.id);
-  }, [updateWatchState, removeFromQueue]);
+  const playQueueItem = useCallback(
+    (item: QueueItem) => {
+      updateWatchState({
+        mode: "watch",
+        media_url: item.media_url,
+        media_title: item.title,
+        current_time: 0,
+        is_playing: true,
+      });
+      removeFromQueue(item.id);
+    },
+    [updateWatchState, removeFromQueue]
+  );
 
   // Send Chat message
-  const sendMessage = useCallback((text: string) => {
-    const currentRoom = roomRef.current;
-    const user = currentUserRef.current;
-    if (!currentRoom || !user || !text.trim()) return;
+  const sendMessage = useCallback(
+    (text: string) => {
+      const currentRoom = roomRef.current;
+      const user = currentUserRef.current;
+      if (!currentRoom || !user || !text.trim()) return;
 
-    const newMsg: ChatMessage = {
-      id: "msg_" + Math.random().toString(36).substring(2, 9),
-      room_id: currentRoom.id,
-      participant_name: user.displayName,
-      participant_id: user.userId,
-      avatar: user.avatar,
-      message: text.trim(),
-      created_at: new Date().toISOString(),
-    };
+      const newMsg: ChatMessage = {
+        id: "msg_" + Math.random().toString(36).substring(2, 9),
+        room_id: currentRoom.id,
+        participant_name: user.displayName,
+        participant_id: user.userId,
+        avatar: user.avatar,
+        message: text.trim(),
+        created_at: new Date().toISOString(),
+      };
 
-    setMessages((prev) => [...prev, newMsg]);
+      setMessages((prev) => [...prev, newMsg]);
 
-    if (isSupabaseConfigured) {
-      const supabase = getSupabaseClient();
-      if (supabase) {
-        supabase.from("messages").insert(newMsg).then();
-      }
-    } else if (broadcastChannelRef.current) {
-      broadcastChannelRef.current.postMessage({
+      broadcastNetworkMessage({
         type: "NEW_MESSAGE",
         message: newMsg,
       });
-    }
-  }, []);
+
+      if (isSupabaseConfigured) {
+        const supabase = getSupabaseClient();
+        if (supabase) {
+          supabase.from("messages").insert(newMsg).then();
+        }
+      }
+    },
+    [broadcastNetworkMessage]
+  );
 
   // Send Floating Reaction
-  const sendReaction = useCallback((emoji: string) => {
-    const user = currentUserRef.current;
-    const currentRoom = roomRef.current;
-    if (!user) return;
-    triggerReactionAnimation(emoji, user.displayName);
+  const sendReaction = useCallback(
+    (emoji: string) => {
+      const user = currentUserRef.current;
+      const currentRoom = roomRef.current;
+      if (!user) return;
+      triggerReactionAnimation(emoji, user.displayName);
 
-    if (isSupabaseConfigured) {
-      const supabase = getSupabaseClient();
-      if (supabase && currentRoom) {
-        supabase.channel(`room_${currentRoom.id}`).send({
-          type: "broadcast",
-          event: "REACTION",
-          payload: { emoji, senderName: user.displayName },
-        });
-      }
-    } else if (broadcastChannelRef.current) {
-      broadcastChannelRef.current.postMessage({
+      broadcastNetworkMessage({
         type: "REACTION",
         emoji,
         senderName: user.displayName,
       });
-    }
-  }, [triggerReactionAnimation]);
+
+      if (isSupabaseConfigured) {
+        const supabase = getSupabaseClient();
+        if (supabase && currentRoom) {
+          supabase.channel(`room_${currentRoom.id}`).send({
+            type: "broadcast",
+            event: "REACTION",
+            payload: { emoji, senderName: user.displayName },
+          });
+        }
+      }
+    },
+    [triggerReactionAnimation, broadcastNetworkMessage]
+  );
 
   // Transfer Host
-  const transferHost = useCallback((newHostUserId: string) => {
-    const currentRoom = roomRef.current;
-    if (!currentRoom) return;
-    setParticipants((prev) => {
-      const target = prev.find((p) => p.user_id === newHostUserId);
-      if (target) {
-        showToast(`${target.display_name} is now the host`);
-      }
-      return prev;
-    });
+  const transferHost = useCallback(
+    (newHostUserId: string) => {
+      const currentRoom = roomRef.current;
+      if (!currentRoom) return;
+      setParticipants((prev) => {
+        const target = prev.find((p) => p.user_id === newHostUserId);
+        if (target) {
+          showToast(`${target.display_name} is now the host`);
+        }
+        return prev;
+      });
 
-    setRoom((prev) => (prev ? { ...prev, host_id: newHostUserId } : null));
+      setRoom((prev) => (prev ? { ...prev, host_id: newHostUserId } : null));
 
-    if (isSupabaseConfigured) {
-      const supabase = getSupabaseClient();
-      if (supabase) {
-        supabase.from("rooms").update({ host_id: newHostUserId }).eq("id", currentRoom.id).then();
-      }
-    } else if (broadcastChannelRef.current) {
-      broadcastChannelRef.current.postMessage({
+      broadcastNetworkMessage({
         type: "HOST_TRANSFER",
         newHostId: newHostUserId,
       });
-    }
-  }, [showToast]);
 
-  // Main Initialization Effect (runs ONLY on roomCode change)
+      if (isSupabaseConfigured) {
+        const supabase = getSupabaseClient();
+        if (supabase) {
+          supabase.from("rooms").update({ host_id: newHostUserId }).eq("id", currentRoom.id).then();
+        }
+      }
+    },
+    [showToast, broadcastNetworkMessage]
+  );
+
+  // Main Network Initialization (PeerJS WebRTC Mesh + BroadcastChannel)
   useEffect(() => {
     const user = getUserSession();
     setCurrentUser(user);
@@ -315,7 +582,7 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
 
     let isMounted = true;
 
-    // Check if room exists in localStorage (for fallback)
+    // Check if room exists locally
     const localRoomKey = `wp_room_${effectiveCode}`;
     let loadedRoom: Room;
     try {
@@ -379,115 +646,94 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
       }
     } catch {}
 
-    // Listen to local BroadcastChannel events (cross-tab / multi-window)
+    // Listen to local BroadcastChannel events (same machine)
     bc.onmessage = (event) => {
-      const data = event.data;
-      if (!data) return;
+      handleNetworkData(event.data);
+    };
 
-      switch (data.type) {
-        case "HELLO": {
-          const newP: Participant = data.participant;
-          if (!newP) break;
-          setParticipants((prev) => {
-            const exists = prev.find((p) => p.user_id === newP.user_id);
-            if (exists) return prev;
-            showToast(`${newP.display_name} joined the room`);
-            return [...prev, newP];
-          });
-          bc.postMessage({
-            type: "WELCOME",
-            participant: myParticipant,
-            room: loadedRoom,
-            watchState: watchStateRef.current,
-          });
-          break;
-        }
+    // Initialize PeerJS for cross-device Internet communication
+    let peer: any = null;
+    const hostPeerId = `wp_host_${effectiveCode}`;
+    const myGuestPeerId = `wp_peer_${effectiveCode}_${user.userId.substring(0, 10)}`;
 
-        case "WELCOME": {
-          if (data.participant) {
-            setParticipants((prev) => {
-              if (prev.some((p) => p.user_id === data.participant.user_id)) return prev;
-              return [...prev, data.participant];
+    const initPeerNetwork = async () => {
+      try {
+        const { Peer } = await import("peerjs");
+
+        // Try to become host peer first
+        peer = new Peer(hostPeerId, {
+          debug: 0,
+        });
+
+        peer.on("open", () => {
+          if (!isMounted) return;
+          peerInstanceRef.current = peer;
+          setRoom((prev) => (prev ? { ...prev, host_id: user.userId } : null));
+
+          // Host listens for incoming connections from joining friends
+          peer.on("connection", (conn: any) => {
+            conn.on("open", () => {
+              guestConnectionsRef.current.set(conn.peer, conn);
+
+              // Send initial state to the joining friend
+              conn.send({
+                type: "WELCOME",
+                participant: myParticipant,
+                room: roomRef.current,
+                watchState: watchStateRef.current,
+                queue: queueRef.current,
+                participants: participantsRef.current,
+              });
+            });
+
+            conn.on("data", (data: any) => {
+              handleNetworkData(data, conn);
+            });
+
+            conn.on("close", () => {
+              guestConnectionsRef.current.delete(conn.peer);
+            });
+          });
+        });
+
+        // If hostPeerId is already taken -> someone else is host! Connect to them as guest
+        peer.on("error", (err: any) => {
+          if (err.type === "unavailable-id") {
+            try {
+              peer.destroy();
+            } catch {}
+
+            // Connect as guest
+            const guestPeer = new Peer(myGuestPeerId, { debug: 0 });
+            peerInstanceRef.current = guestPeer;
+
+            guestPeer.on("open", () => {
+              if (!isMounted) return;
+              const conn = guestPeer.connect(hostPeerId, { reliable: true });
+              hostConnectionRef.current = conn;
+
+              conn.on("open", () => {
+                // Announce to host
+                conn.send({
+                  type: "HELLO",
+                  participant: myParticipant,
+                });
+              });
+
+              conn.on("data", (data: any) => {
+                handleNetworkData(data);
+              });
             });
           }
-          if (data.watchState && data.watchState.updated_at) {
-            setWatchState((cur) => {
-              if (new Date(data.watchState.updated_at) > new Date(cur.updated_at)) {
-                watchStateRef.current = data.watchState;
-                return data.watchState;
-              }
-              return cur;
-            });
-          }
-          break;
-        }
-
-        case "PARTICIPANT_UPDATE": {
-          setParticipants((prev) =>
-            prev.map((p) => (p.user_id === data.userId ? { ...p, ...data.updates } : p))
-          );
-          break;
-        }
-
-        case "WATCH_STATE_UPDATE": {
-          setWatchState(data.watchState);
-          watchStateRef.current = data.watchState;
-          break;
-        }
-
-        case "QUEUE_ADD": {
-          setQueue((prev) => {
-            if (prev.some((i) => i.id === data.item.id)) return prev;
-            return [...prev, data.item];
-          });
-          break;
-        }
-
-        case "QUEUE_REMOVE": {
-          setQueue((prev) => prev.filter((i) => i.id !== data.itemId));
-          break;
-        }
-
-        case "NEW_MESSAGE": {
-          setMessages((prev) => [...prev, data.message]);
-          break;
-        }
-
-        case "REACTION": {
-          triggerReactionAnimation(data.emoji, data.senderName);
-          break;
-        }
-
-        case "HOST_TRANSFER": {
-          setRoom((prev) => (prev ? { ...prev, host_id: data.newHostId } : null));
-          break;
-        }
-
-        case "GOODBYE": {
-          setParticipants((prev) => {
-            const departing = prev.find((p) => p.user_id === data.userId);
-            if (departing) {
-              showToast(`${departing.display_name} left the room`);
-            }
-            const remaining = prev.filter((p) => p.user_id !== data.userId);
-
-            setRoom((currentRoom) => {
-              if (currentRoom && currentRoom.host_id === data.userId && remaining.length > 0) {
-                const newHost = remaining[0];
-                showToast(`${newHost.display_name} is now the host`);
-                return { ...currentRoom, host_id: newHost.user_id };
-              }
-              return currentRoom;
-            });
-
-            return remaining;
-          });
-          break;
-        }
+        });
+      } catch (err) {
+        console.warn("PeerJS connection note:", err);
       }
     };
 
-    // Announce self
+    initPeerNetwork();
+
+    // Broadcast hello to local tabs
     bc.postMessage({
       type: "HELLO",
       participant: myParticipant,
@@ -501,6 +747,12 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
         type: "GOODBYE",
         userId: user.userId,
       });
+      if (hostConnectionRef.current && hostConnectionRef.current.open) {
+        hostConnectionRef.current.send({
+          type: "GOODBYE",
+          userId: user.userId,
+        });
+      }
     };
     window.addEventListener("beforeunload", handleBeforeUnload);
 
@@ -509,8 +761,13 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
       handleBeforeUnload();
       window.removeEventListener("beforeunload", handleBeforeUnload);
       bc.close();
+      if (peerInstanceRef.current) {
+        try {
+          peerInstanceRef.current.destroy();
+        } catch {}
+      }
     };
-  }, [roomCode, initialRoomName, showToast, triggerReactionAnimation]);
+  }, [roomCode, initialRoomName, handleNetworkData]);
 
   return {
     currentUser,
