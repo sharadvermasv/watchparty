@@ -59,18 +59,18 @@ export function RoomControls({
   onToggleFloatingChat,
 }: RoomControlsProps) {
   return (
-    <div className="h-16 border-t border-white/10 px-3 sm:px-6 flex items-center justify-between bg-[#111318]/95 backdrop-blur-2xl shrink-0 z-30">
+    <div className="h-16 px-3 sm:px-6 flex items-center justify-between glass-dock shrink-0 z-30">
       {/* Left: AV Controls */}
-      <div className="flex items-center gap-1.5 sm:gap-3">
+      <div className="flex items-center gap-1.5 sm:gap-2.5">
         {/* Mic */}
         <button
           onClick={onToggleMic}
-          className={`relative p-2.5 rounded-xl transition cursor-pointer flex items-center justify-center ${
+          className={`relative p-2.5 rounded-xl transition cursor-pointer flex items-center justify-center active:scale-95 ${
             isMicMuted
-              ? "bg-white/5 hover:bg-white/10 text-white/70 hover:text-white"
+              ? "bg-white/[0.05] hover:bg-white/[0.1] text-white/70 hover:text-white border border-white/[0.08]"
               : isSpeaking
-              ? "bg-[#FF5733] text-white shadow-lg shadow-[#FF5733]/30 ring-2 ring-[#FF5733]/50 animate-pulse"
-              : "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
+              ? "bg-[#FF5733] text-white shadow-lg shadow-[#FF5733]/40 ring-2 ring-[#FF5733]/60 animate-pulse border border-white/20"
+              : "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shadow-sm"
           }`}
           title={isMicMuted ? "Unmute Microphone" : "Mute Microphone"}
         >
@@ -80,10 +80,10 @@ export function RoomControls({
         {/* Camera */}
         <button
           onClick={onToggleCam}
-          className={`p-2.5 rounded-xl transition cursor-pointer flex items-center justify-center ${
+          className={`p-2.5 rounded-xl transition cursor-pointer flex items-center justify-center active:scale-95 ${
             isCamMuted
-              ? "bg-white/5 hover:bg-white/10 text-white/70 hover:text-white"
-              : "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
+              ? "bg-white/[0.05] hover:bg-white/[0.1] text-white/70 hover:text-white border border-white/[0.08]"
+              : "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shadow-sm"
           }`}
           title={isCamMuted ? "Turn on Camera" : "Turn off Camera"}
         >
@@ -93,10 +93,10 @@ export function RoomControls({
         {/* Screen Share */}
         <button
           onClick={onToggleScreenShare}
-          className={`p-2.5 rounded-xl transition cursor-pointer flex items-center justify-center ${
+          className={`p-2.5 rounded-xl transition cursor-pointer flex items-center justify-center active:scale-95 ${
             isScreenSharing
-              ? "bg-[#FF5733] text-white shadow-lg shadow-[#FF5733]/25"
-              : "bg-white/5 hover:bg-white/10 text-white/70 hover:text-white"
+              ? "bg-[#FF5733] text-white shadow-lg shadow-[#FF5733]/30 border border-white/20"
+              : "bg-white/[0.05] hover:bg-white/[0.1] text-white/70 hover:text-white border border-white/[0.08]"
           }`}
           title={isScreenSharing ? "Stop Sharing Screen" : "Share Screen"}
         >
@@ -106,20 +106,20 @@ export function RoomControls({
         {/* Watch Together */}
         <button
           onClick={onOpenAddMedia}
-          className="p-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-white/70 hover:text-white transition cursor-pointer flex items-center justify-center"
-          title="Watch Together (Add/Change Video)"
+          className="p-2.5 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] text-white/70 hover:text-white border border-white/[0.08] transition cursor-pointer flex items-center justify-center active:scale-95"
+          title="Watch Together (Add/Change Video or Stream)"
         >
           <Film className="w-4 h-4 sm:w-5 sm:h-5" />
         </button>
       </div>
 
       {/* Center: Quick Floating Reaction Bar */}
-      <div className="hidden lg:flex items-center gap-1 bg-[#151820] border border-white/5 p-1 rounded-xl">
+      <div className="hidden lg:flex items-center gap-1 bg-black/30 backdrop-blur-xl border border-white/[0.08] p-1 rounded-xl shadow-inner">
         {QUICK_REACTIONS.map((emoji) => (
           <button
             key={emoji}
             onClick={() => onQuickReaction(emoji)}
-            className="w-8 h-8 rounded-lg hover:bg-white/10 flex items-center justify-center text-sm transition transform hover:scale-125 cursor-pointer active:scale-95"
+            className="w-8 h-8 rounded-lg hover:bg-white/[0.12] flex items-center justify-center text-sm transition transform hover:scale-125 cursor-pointer active:scale-95"
             title={`React ${emoji}`}
           >
             {emoji}
@@ -128,15 +128,15 @@ export function RoomControls({
       </div>
 
       {/* Right: Panels & Tools */}
-      <div className="flex items-center gap-1.5 sm:gap-3">
+      <div className="flex items-center gap-1.5 sm:gap-2.5">
         {/* Sound FX Toggle */}
         {onToggleSound && (
           <button
             onClick={onToggleSound}
-            className={`p-2 sm:p-2.5 rounded-xl transition cursor-pointer flex items-center justify-center ${
+            className={`p-2 sm:p-2.5 rounded-xl transition cursor-pointer flex items-center justify-center active:scale-95 ${
               soundEnabled
-                ? "text-white/70 hover:text-white hover:bg-white/10"
-                : "text-white/30 bg-white/5"
+                ? "text-white/70 hover:text-white hover:bg-white/[0.08] border border-transparent"
+                : "text-white/30 bg-white/[0.04] border border-white/[0.06]"
             }`}
             title={soundEnabled ? "Mute Sound Effects" : "Enable Sound Effects"}
           >
@@ -152,10 +152,10 @@ export function RoomControls({
         {onToggleFloatingChat && (
           <button
             onClick={onToggleFloatingChat}
-            className={`hidden sm:flex p-2 sm:p-2.5 rounded-xl transition cursor-pointer items-center justify-center ${
+            className={`hidden sm:flex p-2 sm:p-2.5 rounded-xl transition cursor-pointer items-center justify-center active:scale-95 ${
               isFloatingChatOpen
-                ? "bg-[#FF5733]/20 text-[#FF5733] border border-[#FF5733]/30"
-                : "bg-white/5 hover:bg-white/10 text-white/60 hover:text-white"
+                ? "bg-[#FF5733]/25 text-[#FF5733] border border-[#FF5733]/40 shadow-sm"
+                : "bg-white/[0.05] hover:bg-white/[0.1] text-white/60 hover:text-white border border-white/[0.08]"
             }`}
             title="Toggle Live Stream Chat Overlay"
           >
@@ -166,16 +166,16 @@ export function RoomControls({
         {/* Queue */}
         <button
           onClick={() => onToggleTab("queue")}
-          className={`relative p-2.5 rounded-xl transition cursor-pointer flex items-center justify-center ${
+          className={`relative p-2.5 rounded-xl transition cursor-pointer flex items-center justify-center active:scale-95 ${
             activeTab === "queue"
-              ? "bg-white/15 text-white"
-              : "bg-white/5 hover:bg-white/10 text-white/70 hover:text-white"
+              ? "bg-white/[0.15] text-white border border-white/[0.2] shadow-inner"
+              : "bg-white/[0.05] hover:bg-white/[0.1] text-white/70 hover:text-white border border-white/[0.08]"
           }`}
           title="Up Next Playlist"
         >
           <ListVideo className="w-4 h-4 sm:w-5 sm:h-5" />
           {queueCount > 0 && (
-            <span className="absolute -top-1 -right-1 w-4 h-4 bg-[#FF5733] text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+            <span className="absolute -top-1 -right-1 w-4 h-4 bg-[#FF5733] text-white text-[10px] font-bold rounded-full flex items-center justify-center shadow-md">
               {queueCount}
             </span>
           )}
@@ -184,10 +184,10 @@ export function RoomControls({
         {/* People */}
         <button
           onClick={() => onToggleTab("people")}
-          className={`p-2.5 rounded-xl transition cursor-pointer flex items-center justify-center ${
+          className={`p-2.5 rounded-xl transition cursor-pointer flex items-center justify-center active:scale-95 ${
             activeTab === "people"
-              ? "bg-white/15 text-white"
-              : "bg-white/5 hover:bg-white/10 text-white/70 hover:text-white"
+              ? "bg-white/[0.15] text-white border border-white/[0.2] shadow-inner"
+              : "bg-white/[0.05] hover:bg-white/[0.1] text-white/70 hover:text-white border border-white/[0.08]"
           }`}
           title="Participants"
         >
@@ -197,16 +197,16 @@ export function RoomControls({
         {/* Chat */}
         <button
           onClick={() => onToggleTab("chat")}
-          className={`relative p-2.5 rounded-xl transition cursor-pointer flex items-center justify-center ${
+          className={`relative p-2.5 rounded-xl transition cursor-pointer flex items-center justify-center active:scale-95 ${
             activeTab === "chat"
-              ? "bg-white/15 text-white"
-              : "bg-white/5 hover:bg-white/10 text-white/70 hover:text-white"
+              ? "bg-white/[0.15] text-white border border-white/[0.2] shadow-inner"
+              : "bg-white/[0.05] hover:bg-white/[0.1] text-white/70 hover:text-white border border-white/[0.08]"
           }`}
           title="Chat"
         >
           <MessageSquare className="w-4 h-4 sm:w-5 sm:h-5" />
           {unreadCount > 0 && (
-            <span className="absolute -top-1 -right-1 w-4 h-4 bg-emerald-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+            <span className="absolute -top-1 -right-1 w-4 h-4 bg-emerald-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center shadow-md">
               {unreadCount}
             </span>
           )}
@@ -215,7 +215,7 @@ export function RoomControls({
         {/* QR for 2nd device (Mobile) */}
         <button
           onClick={onOpenQR}
-          className="p-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-white/70 hover:text-white transition cursor-pointer flex items-center justify-center sm:hidden"
+          className="p-2.5 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] text-white/70 hover:text-white border border-white/[0.08] transition cursor-pointer flex items-center justify-center sm:hidden active:scale-95"
           title="2nd Device QR"
         >
           <QrCode className="w-4 h-4" />

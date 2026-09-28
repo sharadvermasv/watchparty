@@ -113,7 +113,7 @@ export default function RoomPage() {
     updateWatchState({
       mode: "watch",
       media_url: url,
-      media_title: title || "YouTube Video",
+      media_title: title || "Video Stream",
       current_time: 0,
       is_playing: true,
     });
@@ -156,21 +156,32 @@ export default function RoomPage() {
 
   if (isLoading || !room || !currentUser) {
     return (
-      <div className="min-h-screen bg-[#08090B] flex flex-col items-center justify-center text-white">
-        <div className="relative mb-4">
+      <div className="min-h-screen bg-[#07080b] flex flex-col items-center justify-center text-white relative overflow-hidden">
+        <div className="ambient-bg">
+          <div className="ambient-orb-coral" />
+          <div className="ambient-orb-violet" />
+        </div>
+        <div className="relative mb-4 z-10">
           <div className="absolute -inset-2 bg-gradient-to-r from-[#FF5733] to-[#ff8c42] rounded-2xl blur-lg opacity-75 animate-pulse" />
-          <div className="relative w-12 h-12 rounded-2xl bg-[#FF5733] flex items-center justify-center font-black text-xl shadow-2xl">
+          <div className="relative w-12 h-12 rounded-2xl bg-gradient-to-br from-[#FF5733] to-[#ff724d] flex items-center justify-center font-black text-xl shadow-2xl border border-white/20">
             WP
           </div>
         </div>
-        <p className="text-sm font-semibold tracking-wide">Entering room {roomCode}…</p>
-        <p className="text-xs text-[#A7ABB5] mt-1">Connecting to your friends</p>
+        <p className="text-sm font-semibold tracking-wide z-10">Entering room {roomCode}…</p>
+        <p className="text-xs text-[#A7ABB5] mt-1 z-10">Connecting to your friends</p>
       </div>
     );
   }
 
   return (
-    <div className="h-screen w-screen bg-[#08090B] flex flex-col overflow-hidden select-none">
+    <div className="h-screen w-screen bg-[#07080b] flex flex-col overflow-hidden select-none relative">
+      {/* Ambient glowing glassmorphic background orbs */}
+      <div className="ambient-bg">
+        <div className="ambient-orb-coral" />
+        <div className="ambient-orb-violet" />
+        <div className="ambient-orb-cyan" />
+      </div>
+
       {/* Top Header */}
       <RoomHeader
         roomName={room.name}
@@ -182,7 +193,7 @@ export default function RoomPage() {
       />
 
       {/* Main Content Area: Stage + Collapsible Side Panel */}
-      <div className="flex-1 flex flex-col md:flex-row overflow-hidden relative">
+      <div className="flex-1 flex flex-col md:flex-row overflow-hidden relative z-10">
         <RoomStage
           watchState={watchState}
           isHost={isHost}

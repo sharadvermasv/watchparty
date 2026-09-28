@@ -72,21 +72,21 @@ export function AddMediaModal({
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
-      <div className="relative w-full max-w-lg bg-[#151820] border border-white/10 rounded-2xl p-6 shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-fade-in">
+      <div className="relative w-full max-w-lg glass-panel rounded-3xl p-6 sm:p-7 shadow-[0_25px_60px_rgba(0,0,0,0.7)] border border-white/[0.14]">
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 p-1.5 rounded-lg text-white/50 hover:text-white hover:bg-white/10 transition cursor-pointer"
+          className="absolute top-4 right-4 p-1.5 rounded-lg text-white/50 hover:text-white hover:bg-white/[0.08] transition cursor-pointer"
         >
           <X className="w-4 h-4" />
         </button>
 
-        <div className="flex items-center gap-3 mb-5">
-          <div className="w-10 h-10 rounded-xl bg-[#FF5733]/15 text-[#FF5733] flex items-center justify-center">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="w-10 h-10 rounded-xl bg-[#FF5733]/20 border border-[#FF5733]/30 text-[#FF5733] flex items-center justify-center shadow-lg shadow-[#FF5733]/20">
             <Film className="w-5 h-5" />
           </div>
           <div>
-            <h3 className="text-lg font-bold text-white">Watch Together</h3>
+            <h3 className="text-lg font-bold text-white tracking-tight">Watch Together</h3>
             <p className="text-xs text-[#A7ABB5]">Paste any YouTube link, HLS (.m3u8) feed, or direct video (.mp4) stream</p>
           </div>
         </div>
@@ -104,7 +104,7 @@ export function AddMediaModal({
                 setUrl(e.target.value);
                 setError(null);
               }}
-              className="w-full bg-[#08090B] border border-white/10 focus:border-[#FF5733] rounded-xl px-4 py-2.5 text-sm text-white placeholder-white/30 focus:outline-none transition"
+              className="w-full glass-input rounded-xl px-4 py-2.5 text-xs sm:text-sm text-white placeholder-white/30 focus:outline-none transition"
               autoFocus
             />
             {error && <p className="text-xs text-red-400 mt-1.5">{error}</p>}
@@ -119,13 +119,13 @@ export function AddMediaModal({
               placeholder="e.g. Movie / Episode Title"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              className="w-full bg-[#08090B] border border-white/10 focus:border-[#FF5733] rounded-xl px-4 py-2.5 text-sm text-white placeholder-white/30 focus:outline-none transition"
+              className="w-full glass-input rounded-xl px-4 py-2.5 text-xs sm:text-sm text-white placeholder-white/30 focus:outline-none transition"
             />
           </div>
 
           {/* Quick sample videos */}
           <div className="pt-1">
-            <span className="text-[11px] font-medium text-white/50 flex items-center gap-1 mb-2">
+            <span className="text-[11px] font-medium text-white/60 flex items-center gap-1 mb-2">
               <Sparkles className="w-3 h-3 text-[#FF5733]" /> Try a demo format:
             </span>
             <div className="space-y-1.5">
@@ -137,15 +137,15 @@ export function AddMediaModal({
                     setUrl(s.url);
                     setTitle(s.title);
                   }}
-                  className="w-full text-left px-3 py-1.5 rounded-lg bg-[#111318] hover:bg-white/5 border border-white/5 text-xs text-[#A7ABB5] hover:text-white transition flex items-center justify-between"
+                  className="w-full text-left px-3.5 py-2 rounded-xl glass-card glass-card-hover text-xs text-[#A7ABB5] hover:text-white transition flex items-center justify-between"
                 >
                   <div className="flex items-center gap-2 truncate mr-2">
-                    <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-white/10 text-white/70">
+                    <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-white/[0.08] text-white/80 border border-white/10">
                       {s.badge}
                     </span>
                     <span className="truncate">{s.title}</span>
                   </div>
-                  <span className="text-[10px] text-[#FF5733] shrink-0 font-medium">Use</span>
+                  <span className="text-[10px] text-[#FF5733] shrink-0 font-bold">Use</span>
                 </button>
               ))}
             </div>
@@ -156,7 +156,7 @@ export function AddMediaModal({
             {isHost && (
               <button
                 type="submit"
-                className="flex-1 py-2.5 rounded-xl bg-[#FF5733] hover:bg-[#ff6e4d] text-white text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer shadow-lg shadow-[#FF5733]/20"
+                className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-[#FF5733] to-[#ff724d] hover:brightness-110 text-white text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer shadow-lg shadow-[#FF5733]/30 border border-white/20 active:scale-95"
               >
                 <Play className="w-3.5 h-3.5 fill-current" />
                 Play Now
@@ -168,7 +168,7 @@ export function AddMediaModal({
               onClick={handleQueue}
               className={`${
                 isHost ? "flex-1" : "w-full"
-              } py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-white text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer`}
+              } py-2.5 rounded-xl bg-white/[0.08] hover:bg-white/[0.14] text-white text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer border border-white/[0.12] active:scale-95`}
             >
               <Plus className="w-3.5 h-3.5" />
               Add to Up Next

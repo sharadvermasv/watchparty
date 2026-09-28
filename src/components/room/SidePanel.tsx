@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect } from "react";
 import {
   MessageSquare,
   Users,
@@ -36,7 +36,6 @@ interface SidePanelProps {
 
 const QUICK_REACTIONS = ["😂", "❤️", "😭", "🔥", "💀", "👀"];
 
-// Helper to convert MM:SS or HH:MM:SS string to seconds
 function parseTimestampToSeconds(ts: string): number | null {
   const parts = ts.split(":").map(Number);
   if (parts.some(isNaN)) return null;
@@ -48,7 +47,6 @@ function parseTimestampToSeconds(ts: string): number | null {
   return null;
 }
 
-// Render message text with clickable timestamp badges
 function renderFormattedMessage(
   text: string,
   onSeek?: (sec: number) => void
@@ -64,7 +62,7 @@ function renderFormattedMessage(
           <button
             key={i}
             onClick={() => onSeek(seconds)}
-            className="inline-flex items-center px-1.5 py-0.5 mx-0.5 rounded bg-[#FF5733]/20 hover:bg-[#FF5733] text-[#FF5733] hover:text-white font-mono text-[11px] font-semibold transition cursor-pointer"
+            className="inline-flex items-center px-1.5 py-0.5 mx-0.5 rounded bg-[#FF5733]/25 hover:bg-[#FF5733] text-[#FF5733] hover:text-white font-mono text-[11px] font-semibold transition cursor-pointer border border-[#FF5733]/30"
             title={`Jump to ${part}`}
           >
             {part}
@@ -100,7 +98,6 @@ export function SidePanel({
   const chatBottomRef = useRef<HTMLDivElement>(null);
   const typingTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Auto-scroll chat to latest message
   useEffect(() => {
     if (activeTab === "chat") {
       chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -133,9 +130,9 @@ export function SidePanel({
   if (!activeTab) return null;
 
   return (
-    <aside className="w-full md:w-80 h-[50vh] md:h-full border-t md:border-t-0 md:border-l border-white/10 bg-[#111318]/95 backdrop-blur-xl flex flex-col shrink-0 z-30 transition-all">
+    <aside className="w-full md:w-80 h-[50vh] md:h-full border-t md:border-t-0 md:border-l border-white/[0.08] bg-[#0c0e15]/80 backdrop-blur-2xl flex flex-col shrink-0 z-30 transition-all shadow-2xl">
       {/* Panel Header */}
-      <div className="h-12 border-b border-white/10 px-4 flex items-center justify-between shrink-0">
+      <div className="h-12 border-b border-white/[0.08] px-4 flex items-center justify-between shrink-0 bg-white/[0.02]">
         <div className="flex items-center gap-2">
           {activeTab === "chat" && (
             <>
@@ -163,7 +160,7 @@ export function SidePanel({
 
         <button
           onClick={onClose}
-          className="p-1 rounded-lg text-white/50 hover:text-white hover:bg-white/10 transition cursor-pointer"
+          className="p-1 rounded-lg text-white/50 hover:text-white hover:bg-white/[0.08] transition cursor-pointer"
         >
           <X className="w-4 h-4" />
         </button>
@@ -177,36 +174,48 @@ export function SidePanel({
             <div className="flex-1 p-4 space-y-3 overflow-y-auto">
               {messages.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-center text-[#6B7280] p-4">
-                  <p className="text-xs">No messages yet.</p>
+                  <div className="w-10 h-10 rounded-full bg-white/[0.04] border border-white/[0.08] flex items-center justify-center text-lg mb-2">
+                    💬
+                  </div>
+                  <p className="text-xs font-medium text-white/80">No messages yet.</p>
                   <p className="text-[11px] mt-1 text-[#A7ABB5]">Say hi to the party!</p>
                 </div>
               ) : (
                 messages.map((m) => {
                   const isMe = m.participant_id === currentUserId;
                   return (
-                    <div key={m.id} className="flex items-start gap-2.5">
-                      <div className="w-6 h-6 rounded-full bg-white/10 flex items-center justify-center text-xs shrink-0 select-none">
-                        {m.avatar || "🍿"}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-baseline gap-1.5">
-                          <span
-                            className={`text-xs font-semibold truncate ${
-                              isMe ? "text-[#FF5733]" : "text-white/90"
-                            }`}
-                          >
-                            {m.participant_name}
-                          </span>
-                          <span className="text-[9px] text-white/30 font-mono">
-                            {new Date(m.created_at).toLocaleTimeString([], {
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })}
-                          </span>
+                    <div
+                      key={m.id}
+                      className={`p-2.5 rounded-xl border transition ${
+                        isMe
+                          ? "bg-white/[0.05] border-white/[0.1] shadow-sm ml-2"
+                          : "bg-black/25 border-white/[0.06] mr-2"
+                      }`}
+                    >
+                      <div className="flex items-start gap-2.5">
+                        <div className="w-6 h-6 rounded-full bg-white/10 flex items-center justify-center text-xs shrink-0 select-none shadow-sm">
+                          {m.avatar || "🍿"}
                         </div>
-                        <p className="text-xs text-white/80 mt-0.5 break-words leading-relaxed">
-                          {renderFormattedMessage(m.message, onSeekTimestamp)}
-                        </p>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-baseline gap-1.5">
+                            <span
+                              className={`text-xs font-semibold truncate ${
+                                isMe ? "text-[#FF5733]" : "text-white/90"
+                              }`}
+                            >
+                              {m.participant_name}
+                            </span>
+                            <span className="text-[9px] text-white/30 font-mono">
+                              {new Date(m.created_at).toLocaleTimeString([], {
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })}
+                            </span>
+                          </div>
+                          <p className="text-xs text-white/80 mt-0.5 break-words leading-relaxed">
+                            {renderFormattedMessage(m.message, onSeekTimestamp)}
+                          </p>
+                        </div>
                       </div>
                     </div>
                   );
@@ -217,7 +226,7 @@ export function SidePanel({
 
             {/* Typing Indicator */}
             {typingUserNames.length > 0 && (
-              <div className="px-4 py-1 text-[11px] text-[#A7ABB5] italic flex items-center gap-1.5 bg-[#0e1014]/60">
+              <div className="px-4 py-1.5 text-[11px] text-[#A7ABB5] italic flex items-center gap-1.5 bg-black/40 backdrop-blur-md border-t border-white/[0.04]">
                 <span className="flex gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-[#FF5733] animate-bounce" />
                   <span className="w-1.5 h-1.5 rounded-full bg-[#FF5733] animate-bounce [animation-delay:0.15s]" />
@@ -230,12 +239,12 @@ export function SidePanel({
             )}
 
             {/* Quick Reactions strip */}
-            <div className="px-3 py-1.5 border-t border-white/5 bg-[#0e1014] flex items-center justify-between">
+            <div className="px-3 py-1.5 border-t border-white/[0.06] bg-black/30 backdrop-blur-md flex items-center justify-between">
               {QUICK_REACTIONS.map((emoji) => (
                 <button
                   key={emoji}
                   onClick={() => onQuickReaction(emoji)}
-                  className="w-7 h-7 rounded hover:bg-white/10 flex items-center justify-center text-xs transition transform hover:scale-125 cursor-pointer active:scale-95"
+                  className="w-7 h-7 rounded-lg hover:bg-white/[0.1] flex items-center justify-center text-xs transition transform hover:scale-125 cursor-pointer active:scale-95"
                 >
                   {emoji}
                 </button>
@@ -243,19 +252,19 @@ export function SidePanel({
             </div>
 
             {/* Chat Input */}
-            <form onSubmit={handleSendChat} className="p-3 border-t border-white/10 bg-[#151820]">
+            <form onSubmit={handleSendChat} className="p-3 border-t border-white/[0.08] bg-black/40 backdrop-blur-xl">
               <div className="relative flex items-center">
                 <input
                   type="text"
                   placeholder="Say something (e.g. check 01:23)…"
                   value={chatInput}
                   onChange={handleInputChange}
-                  className="w-full bg-[#08090B] border border-white/10 focus:border-[#FF5733] rounded-xl pl-3.5 pr-10 py-2 text-xs text-white placeholder-white/30 focus:outline-none transition"
+                  className="w-full glass-input rounded-xl pl-3.5 pr-10 py-2.5 text-xs text-white placeholder-white/30 focus:outline-none transition"
                 />
                 <button
                   type="submit"
                   disabled={!chatInput.trim()}
-                  className="absolute right-1.5 p-1.5 rounded-lg text-[#FF5733] hover:text-[#ff6e4d] disabled:opacity-30 disabled:hover:text-[#FF5733] transition cursor-pointer"
+                  className="absolute right-1.5 p-1.5 rounded-lg text-[#FF5733] hover:text-[#ff6e4d] disabled:opacity-30 transition cursor-pointer active:scale-95"
                 >
                   <Send className="w-3.5 h-3.5" />
                 </button>
@@ -276,14 +285,13 @@ export function SidePanel({
                   key={p.user_id}
                   className={`p-2.5 rounded-xl border transition flex items-center justify-between ${
                     p.is_speaking
-                      ? "bg-[#FF5733]/10 border-[#FF5733]/30"
-                      : "bg-[#151820] border-white/5 hover:border-white/10"
+                      ? "bg-[#FF5733]/15 border-[#FF5733]/40 shadow-md shadow-[#FF5733]/20"
+                      : "bg-white/[0.035] hover:bg-white/[0.06] border-white/[0.08]"
                   }`}
                 >
                   <div className="flex items-center gap-3 min-w-0">
-                    {/* Avatar with speaking pulse */}
                     <div
-                      className={`relative w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-sm select-none ${
+                      className={`relative w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-sm select-none shadow-sm ${
                         p.is_speaking ? "ring-2 ring-[#FF5733] speaking-ring" : ""
                       }`}
                     >
@@ -296,7 +304,7 @@ export function SidePanel({
                         <span className="text-xs font-semibold text-white truncate">
                           {p.display_name}
                         </span>
-                        {isMe && <span className="text-[10px] text-white/40">(You)</span>}
+                        {isMe && <span className="text-[10px] text-white/40 font-mono">(You)</span>}
                         {isPartyHost && (
                           <span title="Host" className="text-amber-400">
                             <Crown className="w-3 h-3 fill-current" />
@@ -304,10 +312,9 @@ export function SidePanel({
                         )}
                       </div>
 
-                      {/* Status tags */}
                       <div className="flex items-center gap-1.5 mt-0.5">
                         {p.is_sharing && (
-                          <span className="text-[10px] font-medium text-red-400 bg-red-400/10 px-1.5 py-0.2 rounded flex items-center gap-0.5">
+                          <span className="text-[10px] font-semibold text-red-400 bg-red-400/10 px-1.5 py-0.2 rounded flex items-center gap-0.5 border border-red-400/20">
                             <span className="w-1 h-1 rounded-full bg-red-400 animate-ping" />
                             Sharing
                           </span>
@@ -319,12 +326,11 @@ export function SidePanel({
                     </div>
                   </div>
 
-                  {/* Host Controls */}
                   <div className="flex items-center gap-1">
                     {isHost && !isPartyHost && (
                       <button
                         onClick={() => onTransferHost(p.user_id)}
-                        className="text-[10px] text-white/60 hover:text-amber-400 bg-white/5 hover:bg-white/10 px-2 py-1 rounded transition cursor-pointer"
+                        className="text-[10px] text-white/60 hover:text-amber-400 bg-white/[0.06] hover:bg-white/[0.12] border border-white/[0.08] px-2 py-1 rounded transition cursor-pointer"
                         title="Make Room Host"
                       >
                         Make Host
@@ -343,16 +349,19 @@ export function SidePanel({
             <div className="p-3 space-y-2 overflow-y-auto">
               {queue.length === 0 ? (
                 <div className="py-12 text-center text-[#6B7280]">
-                  <p className="text-xs">No videos in queue.</p>
+                  <div className="w-10 h-10 rounded-full bg-white/[0.04] border border-white/[0.08] flex items-center justify-center text-lg mx-auto mb-2">
+                    🎬
+                  </div>
+                  <p className="text-xs font-medium text-white/80">No videos in queue.</p>
                   <p className="text-[11px] mt-1 text-[#A7ABB5]">
-                    Paste a YouTube link below to line up videos!
+                    Paste a YouTube, HLS, or MP4 link below!
                   </p>
                 </div>
               ) : (
                 queue.map((item, idx) => (
                   <div
                     key={item.id}
-                    className="p-2.5 rounded-xl bg-[#151820] border border-white/5 hover:border-white/10 flex items-center justify-between gap-2 group"
+                    className="p-2.5 rounded-xl bg-white/[0.035] hover:bg-white/[0.06] border border-white/[0.08] flex items-center justify-between gap-2 group transition"
                   >
                     <div className="flex items-center gap-2.5 min-w-0">
                       <span className="text-xs font-mono text-white/30 w-5 shrink-0">
@@ -373,7 +382,7 @@ export function SidePanel({
                       {isHost && (
                         <button
                           onClick={() => onPlayQueueItem(item)}
-                          className="p-1.5 rounded-lg bg-[#FF5733]/15 text-[#FF5733] hover:bg-[#FF5733] hover:text-white transition cursor-pointer"
+                          className="p-1.5 rounded-lg bg-[#FF5733]/20 text-[#FF5733] hover:bg-[#FF5733] hover:text-white transition cursor-pointer border border-[#FF5733]/30"
                           title="Play now"
                         >
                           <Play className="w-3.5 h-3.5 fill-current" />
@@ -382,7 +391,7 @@ export function SidePanel({
 
                       <button
                         onClick={() => onRemoveFromQueue(item.id)}
-                        className="p-1.5 rounded-lg text-white/30 hover:text-red-400 hover:bg-white/5 transition cursor-pointer"
+                        className="p-1.5 rounded-lg text-white/30 hover:text-red-400 hover:bg-white/[0.08] transition cursor-pointer"
                         title="Remove"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
@@ -394,19 +403,19 @@ export function SidePanel({
             </div>
 
             {/* Add to queue input */}
-            <form onSubmit={handleAddQueue} className="p-3 border-t border-white/10 bg-[#151820]">
+            <form onSubmit={handleAddQueue} className="p-3 border-t border-white/[0.08] bg-black/40 backdrop-blur-xl">
               <div className="relative flex items-center">
                 <input
                   type="text"
-                  placeholder="Paste YouTube link to queue…"
+                  placeholder="Paste YouTube, HLS or MP4 link…"
                   value={queueUrlInput}
                   onChange={(e) => setQueueUrlInput(e.target.value)}
-                  className="w-full bg-[#08090B] border border-white/10 focus:border-[#FF5733] rounded-xl pl-3.5 pr-10 py-2 text-xs text-white placeholder-white/30 focus:outline-none transition"
+                  className="w-full glass-input rounded-xl pl-3.5 pr-10 py-2.5 text-xs text-white placeholder-white/30 focus:outline-none transition"
                 />
                 <button
                   type="submit"
                   disabled={!queueUrlInput.trim()}
-                  className="absolute right-1.5 p-1.5 rounded-lg text-[#FF5733] hover:text-[#ff6e4d] disabled:opacity-30 disabled:hover:text-[#FF5733] transition cursor-pointer"
+                  className="absolute right-1.5 p-1.5 rounded-lg text-[#FF5733] hover:text-[#ff6e4d] disabled:opacity-30 transition cursor-pointer active:scale-95"
                 >
                   <Plus className="w-3.5 h-3.5" />
                 </button>

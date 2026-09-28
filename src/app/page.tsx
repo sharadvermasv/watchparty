@@ -22,15 +22,22 @@ export default function LandingPage() {
   const [isJoinOpen, setIsJoinOpen] = useState(false);
 
   return (
-    <div className="min-h-screen bg-[#08090B] text-white flex flex-col selection:bg-[#FF5733] selection:text-white">
+    <div className="min-h-screen bg-[#07080b] text-white flex flex-col relative selection:bg-[#FF5733] selection:text-white overflow-hidden">
+      {/* Ambient glowing glassmorphism orbs in background */}
+      <div className="ambient-bg">
+        <div className="ambient-orb-coral" />
+        <div className="ambient-orb-violet" />
+        <div className="ambient-orb-cyan" />
+      </div>
+
       {/* Navigation */}
-      <nav className="border-b border-white/5 bg-[#08090B]/80 backdrop-blur-md sticky top-0 z-40">
+      <nav className="relative z-40 border-b border-white/[0.08] bg-[#0c0e14]/60 backdrop-blur-2xl sticky top-0 shadow-[0_4px_30px_rgba(0,0,0,0.5)]">
         <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-xl bg-[#FF5733] flex items-center justify-center text-white font-black text-xs shadow-lg shadow-[#FF5733]/30">
+            <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-[#FF5733] to-[#ff7e47] flex items-center justify-center text-white font-black text-xs shadow-lg shadow-[#FF5733]/40 border border-white/20">
               WP
             </div>
-            <span className="font-extrabold text-base tracking-wider uppercase">
+            <span className="font-extrabold text-base tracking-wider uppercase text-white/90">
               Watch Party
             </span>
           </div>
@@ -38,13 +45,13 @@ export default function LandingPage() {
           <div className="flex items-center gap-3">
             <button
               onClick={() => setIsJoinOpen(true)}
-              className="text-xs font-semibold text-white/70 hover:text-white px-3.5 py-2 rounded-xl transition cursor-pointer"
+              className="text-xs font-semibold text-white/70 hover:text-white px-4 py-2 rounded-xl transition cursor-pointer hover:bg-white/[0.06] border border-transparent hover:border-white/[0.08]"
             >
               Join a Room
             </button>
             <button
               onClick={() => setIsCreateOpen(true)}
-              className="text-xs font-bold bg-[#FF5733] hover:bg-[#ff6e4d] text-white px-4 py-2 rounded-xl shadow-lg shadow-[#FF5733]/25 transition cursor-pointer"
+              className="text-xs font-bold bg-gradient-to-r from-[#FF5733] to-[#ff6e4d] hover:brightness-110 text-white px-4 py-2 rounded-xl shadow-lg shadow-[#FF5733]/30 transition cursor-pointer border border-white/20 active:scale-95"
             >
               Create a Room
             </button>
@@ -53,30 +60,30 @@ export default function LandingPage() {
       </nav>
 
       {/* Hero Section */}
-      <section className="pt-16 pb-20 px-6 max-w-6xl mx-auto text-center flex flex-col items-center">
+      <section className="relative z-10 pt-16 pb-20 px-6 max-w-6xl mx-auto text-center flex flex-col items-center">
         {/* Subtle pill tag */}
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/5 border border-white/10 text-xs text-[#A7ABB5] mb-6">
-          <span className="w-1.5 h-1.5 rounded-full bg-[#FF5733] animate-pulse" />
-          <span>Synchronized videos & instant screen sharing</span>
+        <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/[0.04] backdrop-blur-xl border border-white/[0.12] text-xs text-[#A7ABB5] mb-6 shadow-lg shadow-black/20">
+          <span className="w-2 h-2 rounded-full bg-[#FF5733] animate-pulse" />
+          <span className="font-medium">Synchronized YouTube, HLS, Web Video & Screen Share</span>
         </div>
 
         {/* Hero Title */}
         <h1 className="text-4xl sm:text-6xl md:text-7xl font-extrabold tracking-tight max-w-4xl leading-[1.08] mb-6">
           Watch anything. <br />
-          <span className="text-transparent bg-clip-text bg-gradient-to-r from-white via-white/90 to-[#FF5733]">
+          <span className="text-transparent bg-clip-text bg-gradient-to-r from-white via-white/95 to-[#FF5733]">
             Together.
           </span>
         </h1>
 
         <p className="text-base sm:text-lg text-[#A7ABB5] max-w-xl leading-relaxed mb-10">
-          Create a private room, invite your friends, and watch videos together — wherever everyone is.
+          Create a private room, invite your friends, and watch videos or share your screen in frame-accurate sync — on both desktop and mobile.
         </p>
 
         {/* CTAs */}
-        <div className="flex flex-col sm:flex-row items-center gap-3.5 mb-16">
+        <div className="flex flex-col sm:flex-row items-center gap-3.5 mb-16 w-full sm:w-auto">
           <button
             onClick={() => setIsCreateOpen(true)}
-            className="w-full sm:w-auto px-7 py-3.5 rounded-xl bg-[#FF5733] hover:bg-[#ff6e4d] text-white font-bold text-sm shadow-xl shadow-[#FF5733]/30 transition flex items-center justify-center gap-2 cursor-pointer hover:scale-[1.02] active:scale-[0.98]"
+            className="w-full sm:w-auto px-8 py-3.5 rounded-2xl bg-gradient-to-r from-[#FF5733] to-[#ff724d] hover:brightness-110 text-white font-bold text-sm shadow-xl shadow-[#FF5733]/35 transition flex items-center justify-center gap-2 cursor-pointer border border-white/25 hover:scale-[1.02] active:scale-[0.98]"
           >
             <span>Create a Room</span>
             <ArrowRight className="w-4 h-4" />
@@ -84,218 +91,117 @@ export default function LandingPage() {
 
           <button
             onClick={() => setIsJoinOpen(true)}
-            className="w-full sm:w-auto px-7 py-3.5 rounded-xl bg-[#151820] hover:bg-[#1c202a] border border-white/10 hover:border-white/20 text-white font-semibold text-sm transition flex items-center justify-center gap-2 cursor-pointer"
+            className="w-full sm:w-auto px-8 py-3.5 rounded-2xl bg-white/[0.05] hover:bg-white/[0.1] backdrop-blur-xl border border-white/[0.14] text-white font-semibold text-sm transition flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-black/40 hover:scale-[1.02] active:scale-[0.98]"
           >
             <span>Join a Room</span>
           </button>
         </div>
 
         {/* Atmospheric Cinematic Preview Visual */}
-        <div className="relative w-full max-w-4xl rounded-2xl overflow-hidden border border-white/10 shadow-2xl bg-[#111318]">
+        <div className="relative w-full max-w-4xl rounded-2xl overflow-hidden glass-panel border border-white/[0.14] shadow-2xl">
           {/* Mock Video Canvas */}
-          <div className="relative aspect-video bg-gradient-to-tr from-[#0a0c10] via-[#151820] to-[#1f2430] flex items-center justify-center overflow-hidden">
-            {/* Ambient lighting glow */}
-            <div className="absolute -top-32 -left-32 w-80 h-80 bg-[#FF5733]/20 rounded-full blur-[90px] pointer-events-none" />
-            <div className="absolute -bottom-32 -right-32 w-80 h-80 bg-[#8B5CF6]/20 rounded-full blur-[90px] pointer-events-none" />
+          <div className="relative aspect-video bg-gradient-to-tr from-[#0a0c10]/90 via-[#12151e]/80 to-[#191d29]/80 flex items-center justify-center overflow-hidden">
+            {/* Ambient lighting glow inside preview */}
+            <div className="absolute -top-32 -left-32 w-80 h-80 bg-[#FF5733]/25 rounded-full blur-[90px] pointer-events-none" />
+            <div className="absolute -bottom-32 -right-32 w-80 h-80 bg-[#8B5CF6]/25 rounded-full blur-[90px] pointer-events-none" />
 
-            {/* Mock cinematic content */}
-            <div className="text-center z-10 p-6">
-              <div className="w-14 h-14 rounded-full bg-white/10 backdrop-blur-md border border-white/20 flex items-center justify-center text-white mx-auto mb-3 shadow-xl">
-                <Play className="w-6 h-6 fill-current ml-0.5" />
-              </div>
-              <h4 className="text-base font-bold text-white tracking-wide">
-                Interstellar — 10th Anniversary Trailer
-              </h4>
-              <p className="text-xs text-[#A7ABB5] mt-1 font-mono">42:17 / 1:32:00</p>
-            </div>
-
-            {/* Top Left: 3 people watching pill */}
-            <div className="absolute top-4 left-4 z-20 flex items-center gap-2 bg-black/60 backdrop-blur-md border border-white/10 px-3 py-1.5 rounded-full text-xs">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              <span className="font-medium text-white/90">3 people watching</span>
-            </div>
-
-            {/* Floating avatars around video */}
-            {/* Sharad */}
-            <div className="absolute bottom-16 left-6 z-20 bg-[#151820]/90 backdrop-blur-md border border-[#FF5733]/40 rounded-xl px-2.5 py-1.5 flex items-center gap-2 shadow-xl animate-bounce" style={{ animationDuration: "3s" }}>
-              <span className="text-sm">🍿</span>
-              <div>
-                <p className="text-[11px] font-bold text-white leading-none">Sharad</p>
-                <span className="text-[9px] text-[#FF5733] font-medium">Host</span>
+            {/* Mock Floating Participant Video Avatar Badges */}
+            <div className="absolute top-4 left-4 flex items-center gap-2 z-20">
+              <div className="glass-card px-3 py-1.5 rounded-full flex items-center gap-2 shadow-lg">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="text-xs font-semibold text-white/90">Movie Night</span>
               </div>
             </div>
 
-            {/* Alex */}
-            <div className="absolute top-12 right-8 z-20 bg-[#151820]/90 backdrop-blur-md border border-white/10 rounded-xl px-2.5 py-1.5 flex items-center gap-2 shadow-xl animate-pulse">
-              <span className="text-sm">🎬</span>
-              <div>
-                <p className="text-[11px] font-bold text-white leading-none">Alex</p>
-                <span className="text-[9px] text-emerald-400 font-medium">Synced</span>
+            <div className="absolute top-4 right-4 flex items-center gap-2 z-20">
+              <div className="flex -space-x-2">
+                <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-amber-500 to-orange-400 border-2 border-[#151820] flex items-center justify-center text-xs shadow-md">
+                  🍿
+                </div>
+                <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-purple-500 to-indigo-500 border-2 border-[#151820] flex items-center justify-center text-xs shadow-md">
+                  🎬
+                </div>
+                <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-emerald-500 to-teal-400 border-2 border-[#151820] flex items-center justify-center text-xs shadow-md">
+                  🍕
+                </div>
               </div>
             </div>
 
-            {/* Rahul */}
-            <div className="absolute bottom-20 right-10 z-20 bg-[#151820]/90 backdrop-blur-md border border-white/10 rounded-xl px-2.5 py-1.5 flex items-center gap-2 shadow-xl">
-              <span className="text-sm">🚀</span>
-              <div>
-                <p className="text-[11px] font-bold text-white leading-none">Rahul</p>
-                <span className="text-[9px] text-white/50">Listening</span>
+            {/* Play Button */}
+            <div className="w-20 h-20 rounded-full bg-white/[0.08] backdrop-blur-xl border border-white/20 flex items-center justify-center shadow-2xl transition transform hover:scale-105 group cursor-pointer">
+              <div className="w-14 h-14 rounded-full bg-gradient-to-br from-[#FF5733] to-[#ff724d] flex items-center justify-center text-white shadow-lg shadow-[#FF5733]/50">
+                <Play className="w-6 h-6 fill-current ml-1" />
               </div>
             </div>
 
-            {/* Floating reactions simulation */}
-            <div className="absolute bottom-28 left-20 z-20 text-3xl animate-bounce" style={{ animationDuration: "2.2s" }}>
-              😂
-            </div>
-            <div className="absolute top-24 left-1/3 z-20 text-2xl animate-pulse" style={{ animationDuration: "1.8s" }}>
-              🔥
-            </div>
-            <div className="absolute bottom-24 right-1/4 z-20 text-3xl animate-bounce" style={{ animationDuration: "2.6s" }}>
-              💀
-            </div>
-
-            {/* Mock playback scrubber bar */}
-            <div className="absolute bottom-0 inset-x-0 p-4 bg-gradient-to-t from-black/90 to-transparent">
-              <div className="w-full h-1 bg-white/20 rounded-full overflow-hidden">
-                <div className="w-[45%] h-full bg-[#FF5733]" />
+            {/* Mock Scrubber bar at bottom */}
+            <div className="absolute bottom-0 inset-x-0 p-4 bg-gradient-to-t from-black/90 via-black/40 to-transparent flex flex-col gap-2">
+              <div className="w-full h-1.5 bg-white/20 rounded-full overflow-hidden">
+                <div className="w-1/3 h-full bg-[#FF5733] rounded-full" />
+              </div>
+              <div className="flex items-center justify-between text-[11px] text-white/70 font-mono">
+                <span>01:14:20</span>
+                <span className="flex items-center gap-1.5 text-emerald-400">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                  3 Watching • Synced
+                </span>
+                <span>02:30:00</span>
               </div>
             </div>
           </div>
         </div>
       </section>
 
-      {/* How It Works Section */}
-      <section className="py-16 border-t border-white/5 bg-[#0b0d11]">
-        <div className="max-w-5xl mx-auto px-6">
-          <div className="text-center mb-12">
-            <span className="text-xs font-bold text-[#FF5733] uppercase tracking-widest">
-              Simple 3-Step Flow
-            </span>
-            <h2 className="text-2xl sm:text-3xl font-extrabold text-white mt-1">
-              How it works
-            </h2>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="p-6 rounded-2xl bg-[#151820] border border-white/5 relative">
-              <span className="text-3xl font-black text-white/10 absolute top-4 right-4">01</span>
-              <div className="w-10 h-10 rounded-xl bg-[#FF5733]/15 text-[#FF5733] flex items-center justify-center mb-4">
-                <Sparkles className="w-5 h-5" />
-              </div>
-              <h3 className="text-base font-bold text-white mb-1.5">Create a room</h3>
-              <p className="text-xs text-[#A7ABB5] leading-relaxed">
-                One click generates a private room. Choose a room name, pick your guest avatar, and you're in.
-              </p>
-            </div>
-
-            <div className="p-6 rounded-2xl bg-[#151820] border border-white/5 relative">
-              <span className="text-3xl font-black text-white/10 absolute top-4 right-4">02</span>
-              <div className="w-10 h-10 rounded-xl bg-[#8B5CF6]/15 text-[#8B5CF6] flex items-center justify-center mb-4">
-                <Users className="w-5 h-5" />
-              </div>
-              <h3 className="text-base font-bold text-white mb-1.5">Invite your friends</h3>
-              <p className="text-xs text-[#A7ABB5] leading-relaxed">
-                Copy the short invite link or scan the QR code to join effortlessly from a phone or second laptop.
-              </p>
-            </div>
-
-            <div className="p-6 rounded-2xl bg-[#151820] border border-white/5 relative">
-              <span className="text-3xl font-black text-white/10 absolute top-4 right-4">03</span>
-              <div className="w-10 h-10 rounded-xl bg-emerald-500/15 text-emerald-400 flex items-center justify-center mb-4">
-                <Play className="w-5 h-5" />
-              </div>
-              <h3 className="text-base font-bold text-white mb-1.5">Watch together</h3>
-              <p className="text-xs text-[#A7ABB5] leading-relaxed">
-                Paste a YouTube video for synced playback or share your screen for games, movies, and streams.
-              </p>
-            </div>
-          </div>
+      {/* Feature Grid */}
+      <section className="relative z-10 py-20 px-6 max-w-6xl mx-auto border-t border-white/[0.08]">
+        <div className="text-center max-w-xl mx-auto mb-14">
+          <h2 className="text-xs uppercase font-extrabold tracking-widest text-[#FF5733] mb-2">
+            Engineered For Social Watching
+          </h2>
+          <p className="text-2xl sm:text-3xl font-extrabold text-white">
+            Everything you need for movie nights with friends.
+          </p>
         </div>
-      </section>
 
-      {/* Feature Pillars */}
-      <section className="py-20 max-w-6xl mx-auto px-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-          {/* Feature 1: Watch Together */}
-          <div className="p-8 rounded-3xl bg-[#151820] border border-white/5 flex flex-col justify-between">
-            <div>
-              <div className="w-12 h-12 rounded-2xl bg-[#FF5733]/15 text-[#FF5733] flex items-center justify-center mb-6">
-                <Film className="w-6 h-6" />
-              </div>
-              <h3 className="text-xl font-bold text-white mb-2">Watch Together</h3>
-              <p className="text-sm text-[#A7ABB5] leading-relaxed mb-6">
-                Synchronized YouTube playback. Play, pause, and seek commands mirror instantaneously across everyone in the room with automatic drift reconciliation and one-click "Sync me".
-              </p>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          {/* Card 1 */}
+          <div className="glass-card glass-card-hover p-6 rounded-2xl flex flex-col">
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-[#FF5733]/20 to-[#FF5733]/5 border border-[#FF5733]/30 text-[#FF5733] flex items-center justify-center mb-5 shadow-lg">
+              <Film className="w-6 h-6" />
             </div>
-            <div className="flex items-center gap-2 text-xs font-semibold text-[#FF5733]">
-              <Zap className="w-4 h-4" />
-              <span>Sub-second drift tolerance</span>
-            </div>
+            <h3 className="text-base font-bold text-white mb-2">Universal Watch Together</h3>
+            <p className="text-xs text-[#A7ABB5] leading-relaxed">
+              Synchronize YouTube videos, HLS (.m3u8) feeds, and direct MP4 movies with millisecond drift correction and auto-queue.
+            </p>
           </div>
 
-          {/* Feature 2: Screen Share */}
-          <div className="p-8 rounded-3xl bg-[#151820] border border-white/5 flex flex-col justify-between">
-            <div>
-              <div className="w-12 h-12 rounded-2xl bg-[#8B5CF6]/15 text-[#8B5CF6] flex items-center justify-center mb-6">
-                <Monitor className="w-6 h-6" />
-              </div>
-              <h3 className="text-xl font-bold text-white mb-2">Share Anything</h3>
-              <p className="text-sm text-[#A7ABB5] leading-relaxed mb-6">
-                First-class screen sharing for content that cannot be synchronized directly. Share a browser tab, application window, or full screen for games, local files, and presentations.
-              </p>
+          {/* Card 2 */}
+          <div className="glass-card glass-card-hover p-6 rounded-2xl flex flex-col">
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-[#8B5CF6]/20 to-[#8B5CF6]/5 border border-[#8B5CF6]/30 text-[#8B5CF6] flex items-center justify-center mb-5 shadow-lg">
+              <Monitor className="w-6 h-6" />
             </div>
-            <div className="flex items-center gap-2 text-xs font-semibold text-[#8B5CF6]">
-              <ShieldCheck className="w-4 h-4" />
-              <span>Native browser capture APIs</span>
-            </div>
+            <h3 className="text-base font-bold text-white mb-2">Native WebRTC Screen Share</h3>
+            <p className="text-xs text-[#A7ABB5] leading-relaxed">
+              Share any browser tab, app window, or your whole desktop with high quality audio and peer-to-peer transmission.
+            </p>
           </div>
 
-          {/* Feature 3: Two-Laptop Setup */}
-          <div className="p-8 rounded-3xl bg-[#151820] border border-white/5 flex flex-col justify-between">
-            <div>
-              <div className="w-12 h-12 rounded-2xl bg-amber-400/15 text-amber-400 flex items-center justify-center mb-6">
-                <QrCode className="w-6 h-6" />
-              </div>
-              <h3 className="text-xl font-bold text-white mb-2">Built for Two Laptops</h3>
-              <p className="text-sm text-[#A7ABB5] leading-relaxed mb-6">
-                Have Laptop A play content or share a screen while you join the same room on Laptop B or your phone to talk with friends, monitor chat, and drop reactions.
-              </p>
+          {/* Card 3 */}
+          <div className="glass-card glass-card-hover p-6 rounded-2xl flex flex-col">
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-emerald-500/20 to-emerald-500/5 border border-emerald-500/30 text-emerald-400 flex items-center justify-center mb-5 shadow-lg">
+              <QrCode className="w-6 h-6" />
             </div>
-            <div className="flex items-center gap-2 text-xs font-semibold text-amber-400">
-              <QrCode className="w-4 h-4" />
-              <span>Instant QR code pairing</span>
-            </div>
-          </div>
-
-          {/* Feature 4: Social Presence */}
-          <div className="p-8 rounded-3xl bg-[#151820] border border-white/5 flex flex-col justify-between">
-            <div>
-              <div className="w-12 h-12 rounded-2xl bg-emerald-500/15 text-emerald-400 flex items-center justify-center mb-6">
-                <Users className="w-6 h-6" />
-              </div>
-              <h3 className="text-xl font-bold text-white mb-2">Social Presence</h3>
-              <p className="text-sm text-[#A7ABB5] leading-relaxed mb-6">
-                Voice and camera powered by Jitsi WebRTC, live speaking indicators, floating emoji reactions, room participant list, and Up Next playlist queue.
-              </p>
-            </div>
-            <div className="flex items-center gap-2 text-xs font-semibold text-emerald-400">
-              <Volume2 className="w-4 h-4" />
-              <span>Low-latency audio & floating reactions</span>
-            </div>
+            <h3 className="text-base font-bold text-white mb-2">Two-Device QR Pairing</h3>
+            <p className="text-xs text-[#A7ABB5] leading-relaxed">
+              Streaming on your laptop while chilling on your phone? Scan the instant room QR code to seamlessly join on a 2nd screen.
+            </p>
           </div>
         </div>
       </section>
 
       {/* Footer */}
-      <footer className="border-t border-white/5 py-8 text-center text-xs text-[#6B7280] mt-auto">
-        <div className="max-w-6xl mx-auto px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <span className="font-bold text-white/80">Watch Party</span>
-            <span>—</span>
-            <span>Watch anything. Together.</span>
-          </div>
-          <p>© {new Date().getFullYear()} Watch Party. Cinematic social viewing.</p>
-        </div>
+      <footer className="relative z-10 border-t border-white/[0.08] py-8 text-center text-xs text-[#A7ABB5]/70 bg-black/30 backdrop-blur-md">
+        <p>© 2026 Watch Party. Built for watching together.</p>
       </footer>
 
       {/* Modals */}
