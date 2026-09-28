@@ -6,6 +6,7 @@ import { Monitor, StopCircle, AlertTriangle, ShieldCheck, Maximize } from "lucid
 interface ScreenShareViewerProps {
   isSharing: boolean;
   isHost: boolean;
+  isLocallySharing?: boolean;
   onStartShare: () => void;
   onStopShare: () => void;
   stream: MediaStream | null;
@@ -14,18 +15,17 @@ interface ScreenShareViewerProps {
 export function ScreenShareViewer({
   isSharing,
   isHost,
+  isLocallySharing = false,
   onStartShare,
   onStopShare,
   stream,
 }: ScreenShareViewerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (videoRef.current && stream) {
       videoRef.current.srcObject = stream;
       videoRef.current.play().catch(() => {
-        // Autoplay may need muted
         if (videoRef.current) {
           videoRef.current.muted = true;
           videoRef.current.play().catch(() => {});
@@ -60,7 +60,7 @@ export function ScreenShareViewer({
             <div className="flex items-center gap-3 bg-[#111318]/90 border border-white/10 px-3.5 py-1.5 rounded-full backdrop-blur-md">
               <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse" />
               <span className="text-xs font-medium text-white/90">
-                {isHost ? "You are sharing your screen" : "Screen Share Active"}
+                {isLocallySharing ? "You are sharing your screen" : "Live Screen Share"}
               </span>
             </div>
 
@@ -73,7 +73,7 @@ export function ScreenShareViewer({
                 <Maximize className="w-4 h-4" />
               </button>
 
-              {isHost && (
+              {isLocallySharing && (
                 <button
                   onClick={onStopShare}
                   className="flex items-center gap-1.5 text-xs bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/30 px-3 py-1.5 rounded-full font-medium transition cursor-pointer"

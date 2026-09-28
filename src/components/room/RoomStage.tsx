@@ -15,6 +15,7 @@ interface RoomStageProps {
   onStartScreenShare: () => void;
   onStopScreenShare: () => void;
   screenStream: MediaStream | null;
+  isLocallySharing?: boolean;
   floatingReactions: FloatingReaction[];
   toastMessage: string | null;
 }
@@ -28,6 +29,7 @@ export function RoomStage({
   onStartScreenShare,
   onStopScreenShare,
   screenStream,
+  isLocallySharing = false,
   floatingReactions,
   toastMessage,
 }: RoomStageProps) {
@@ -81,6 +83,7 @@ export function RoomStage({
         <ScreenShareViewer
           isSharing={Boolean(screenStream)}
           isHost={isHost}
+          isLocallySharing={isLocallySharing}
           onStartShare={onStartScreenShare}
           onStopShare={onStopScreenShare}
           stream={screenStream}

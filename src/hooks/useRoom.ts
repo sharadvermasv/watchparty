@@ -36,6 +36,7 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [floatingReactions, setFloatingReactions] = useState<FloatingReaction[]>([]);
+  const [remoteScreenStream, setRemoteScreenStream] = useState<MediaStream | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [connectionStatus, setConnectionStatus] = useState<"connecting" | "connected" | "error">("connecting");
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -58,10 +59,12 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
 
   const broadcastChannelRef = useRef<BroadcastChannel | null>(null);
 
-  // PeerJS WebRTC P2P Data Connections across the internet
+  // PeerJS WebRTC P2P Data & Media Connections across the internet
   const peerInstanceRef = useRef<any>(null);
   const hostConnectionRef = useRef<any>(null);
   const guestConnectionsRef = useRef<Map<string, any>>(new Map());
+  const activeMediaCallsRef = useRef<Map<string, any>>(new Map());
+  const localScreenStreamRef = useRef<MediaStream | null>(null);
 
   const isHost = Boolean(room && currentUser && room.host_id === currentUser.userId);
 
@@ -88,19 +91,15 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
 
   // Universal broadcaster: broadcasts to PeerJS peers, BroadcastChannel, and Supabase
   const broadcastNetworkMessage = useCallback((payload: any) => {
-    // 1. Send via local BroadcastChannel (same machine tabs)
     try {
       broadcastChannelRef.current?.postMessage(payload);
     } catch {}
 
-    // 2. Send via PeerJS WebRTC (across the internet to other laptops)
     if (hostConnectionRef.current && hostConnectionRef.current.open) {
-      // We are guest -> send to host
       try {
         hostConnectionRef.current.send(payload);
       } catch {}
     } else {
-      // We are host -> send to all connected guests
       guestConnectionsRef.current.forEach((conn) => {
         if (conn && conn.open) {
           try {
@@ -110,6 +109,61 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
       });
     }
   }, []);
+
+  // Broadcast WebRTC MediaStream to all connected peers
+  const broadcastScreenStream = useCallback((stream: MediaStream) => {
+    localScreenStreamRef.current = stream;
+
+    const peer = peerInstanceRef.current;
+    if (!peer) return;
+
+    // Call all guests
+    guestConnectionsRef.current.forEach((conn, guestPeerId) => {
+      try {
+        const call = peer.call(guestPeerId, stream);
+        if (call) {
+          activeMediaCallsRef.current.set(guestPeerId, call);
+        }
+      } catch (e) {
+        console.warn("PeerJS call guest error:", e);
+      }
+    });
+
+    // If we are guest, call the host
+    const effectiveCode = roomCode.toUpperCase();
+    const hostPeerId = `wp_host_${effectiveCode}`;
+    if (hostConnectionRef.current && hostConnectionRef.current.open) {
+      try {
+        const call = peer.call(hostPeerId, stream);
+        if (call) {
+          activeMediaCallsRef.current.set(hostPeerId, call);
+        }
+      } catch (e) {
+        console.warn("PeerJS call host error:", e);
+      }
+    }
+
+    broadcastNetworkMessage({
+      type: "SCREEN_SHARE_STARTED",
+      senderId: currentUserRef.current?.userId,
+    });
+  }, [roomCode, broadcastNetworkMessage]);
+
+  // Stop broadcasting screen stream
+  const stopBroadcastingScreenStream = useCallback(() => {
+    localScreenStreamRef.current = null;
+
+    activeMediaCallsRef.current.forEach((call) => {
+      try {
+        call.close();
+      } catch {}
+    });
+    activeMediaCallsRef.current.clear();
+
+    broadcastNetworkMessage({
+      type: "SCREEN_SHARE_STOPPED",
+    });
+  }, [broadcastNetworkMessage]);
 
   // Handle incoming data payload (from PeerJS or BroadcastChannel)
   const handleNetworkData = useCallback(
@@ -143,7 +197,19 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
             broadcastNetworkMessage(welcomePacket);
           }
 
-          // If host received from guest, fan-out to all other guests
+          // If we are currently sharing our screen, immediately call the newly joined peer!
+          if (localScreenStreamRef.current && peerInstanceRef.current && fromConnection) {
+            try {
+              const call = peerInstanceRef.current.call(fromConnection.peer, localScreenStreamRef.current);
+              if (call) {
+                activeMediaCallsRef.current.set(fromConnection.peer, call);
+              }
+            } catch (e) {
+              console.warn("Call new peer error:", e);
+            }
+          }
+
+          // Fan-out to all other guests
           if (fromConnection) {
             guestConnectionsRef.current.forEach((conn) => {
               if (conn !== fromConnection && conn.open) {
@@ -214,6 +280,24 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
               }
             });
           }
+          break;
+        }
+
+        case "SCREEN_SHARE_STARTED": {
+          setWatchState((prev) => ({
+            ...prev,
+            mode: "screen",
+            media_url: null,
+          }));
+          break;
+        }
+
+        case "SCREEN_SHARE_STOPPED": {
+          setRemoteScreenStream(null);
+          setWatchState((prev) => ({
+            ...prev,
+            mode: "idle",
+          }));
           break;
         }
 
@@ -656,6 +740,26 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
     const hostPeerId = `wp_host_${effectiveCode}`;
     const myGuestPeerId = `wp_peer_${effectiveCode}_${user.userId.substring(0, 10)}`;
 
+    const setupIncomingCallListener = (targetPeer: any) => {
+      targetPeer.on("call", (mediaCall: any) => {
+        mediaCall.answer(); // Automatically receive stream
+        mediaCall.on("stream", (incomingStream: MediaStream) => {
+          setRemoteScreenStream(incomingStream);
+          setWatchState((prev) => ({
+            ...prev,
+            mode: "screen",
+            media_url: null,
+          }));
+        });
+        mediaCall.on("close", () => {
+          setRemoteScreenStream(null);
+        });
+        mediaCall.on("error", () => {
+          setRemoteScreenStream(null);
+        });
+      });
+    };
+
     const initPeerNetwork = async () => {
       try {
         const { Peer } = await import("peerjs");
@@ -669,6 +773,8 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
           if (!isMounted) return;
           peerInstanceRef.current = peer;
           setRoom((prev) => (prev ? { ...prev, host_id: user.userId } : null));
+
+          setupIncomingCallListener(peer);
 
           // Host listens for incoming connections from joining friends
           peer.on("connection", (conn: any) => {
@@ -684,6 +790,18 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
                 queue: queueRef.current,
                 participants: participantsRef.current,
               });
+
+              // If screen sharing is active right now, call the newly joined peer!
+              if (localScreenStreamRef.current) {
+                try {
+                  const call = peer.call(conn.peer, localScreenStreamRef.current);
+                  if (call) {
+                    activeMediaCallsRef.current.set(conn.peer, call);
+                  }
+                } catch (e) {
+                  console.warn("Call incoming guest error:", e);
+                }
+              }
             });
 
             conn.on("data", (data: any) => {
@@ -709,6 +827,8 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
 
             guestPeer.on("open", () => {
               if (!isMounted) return;
+              setupIncomingCallListener(guestPeer);
+
               const conn = guestPeer.connect(hostPeerId, { reliable: true });
               hostConnectionRef.current = conn;
 
@@ -778,11 +898,14 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
     queue,
     messages,
     floatingReactions,
+    remoteScreenStream,
     isLoading,
     connectionStatus,
     toastMessage,
     updateWatchState,
     updateMyParticipantStatus,
+    broadcastScreenStream,
+    stopBroadcastingScreenStream,
     addToQueue,
     removeFromQueue,
     playQueueItem,

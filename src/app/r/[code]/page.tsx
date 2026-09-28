@@ -28,10 +28,13 @@ export default function RoomPage() {
     queue,
     messages,
     floatingReactions,
+    remoteScreenStream,
     isLoading,
     toastMessage,
     updateWatchState,
     updateMyParticipantStatus,
+    broadcastScreenStream,
+    stopBroadcastingScreenStream,
     addToQueue,
     removeFromQueue,
     playQueueItem,
@@ -40,7 +43,7 @@ export default function RoomPage() {
     transferHost,
   } = useRoom({ roomCode });
 
-  // Stable callbacks for Jitsi events
+  // Stable callbacks for Jitsi & Screen Sharing events
   const handleParticipantSpeaking = useCallback(
     (speaking: boolean) => {
       updateMyParticipantStatus({ is_speaking: speaking });
@@ -49,14 +52,15 @@ export default function RoomPage() {
   );
 
   const handleScreenShareStarted = useCallback(
-    () => {
+    (stream: MediaStream) => {
       updateMyParticipantStatus({ is_sharing: true });
       updateWatchState({
         mode: "screen",
         media_url: null,
       });
+      broadcastScreenStream(stream);
     },
-    [updateMyParticipantStatus, updateWatchState]
+    [updateMyParticipantStatus, updateWatchState, broadcastScreenStream]
   );
 
   const handleScreenShareStopped = useCallback(() => {
@@ -64,7 +68,8 @@ export default function RoomPage() {
     updateWatchState({
       mode: "idle",
     });
-  }, [updateMyParticipantStatus, updateWatchState]);
+    stopBroadcastingScreenStream();
+  }, [updateMyParticipantStatus, updateWatchState, stopBroadcastingScreenStream]);
 
   // WebRTC & Audio-Video Hook
   const {
@@ -109,6 +114,10 @@ export default function RoomPage() {
     });
   };
 
+  // Active stream: local if this user is sharing, or remote if friend is sharing
+  const activeScreenStream = screenStream || remoteScreenStream;
+  const isLocallySharing = Boolean(screenStream);
+
   if (isLoading || !room || !currentUser) {
     return (
       <div className="min-h-screen bg-[#08090B] flex flex-col items-center justify-center text-white">
@@ -143,7 +152,8 @@ export default function RoomPage() {
           onOpenAddMedia={() => setIsAddMediaOpen(true)}
           onStartScreenShare={startScreenShare}
           onStopScreenShare={stopScreenShare}
-          screenStream={screenStream}
+          screenStream={activeScreenStream}
+          isLocallySharing={isLocallySharing}
           floatingReactions={floatingReactions}
           toastMessage={toastMessage}
         />
