@@ -14,6 +14,11 @@ import {
 import { getSupabaseClient, isSupabaseConfigured } from "@/lib/supabase/client";
 import { getUserSession } from "@/lib/session";
 import { parseYouTubeVideoId } from "@/lib/sync/driftCalculator";
+import {
+  playMessageSound,
+  playReactionSound,
+  playJoinSound,
+} from "@/lib/audio/soundEffects";
 
 interface UseRoomProps {
   roomCode: string;
@@ -50,6 +55,7 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [connectionStatus, setConnectionStatus] = useState<"connecting" | "connected" | "error">("connecting");
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [typingMap, setTypingMap] = useState<Record<string, { name: string; timestamp: number }>>({});
 
   // Stable references for async callbacks and event listeners
   const currentUserRef = useRef<UserSession | null>(null);
@@ -105,7 +111,6 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
 
   // Universal publisher via Supabase Realtime Broadcast & local BroadcastChannel
   const sendBroadcast = useCallback((event: string, payload: any) => {
-    // 1. Supabase Realtime Broadcast
     if (supabaseChannelRef.current) {
       supabaseChannelRef.current
         .send({
@@ -118,10 +123,39 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
         });
     }
 
-    // 2. BroadcastChannel (for local tabs in the same browser)
     try {
       broadcastChannelRef.current?.postMessage({ event, payload });
     } catch {}
+  }, []);
+
+  // Send typing event
+  const sendTyping = useCallback(() => {
+    const user = currentUserRef.current;
+    if (!user) return;
+    sendBroadcast("TYPING", {
+      userId: user.userId,
+      displayName: user.displayName,
+    });
+  }, [sendBroadcast]);
+
+  // Clean up stale typing indicators
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const now = Date.now();
+      setTypingMap((prev) => {
+        let changed = false;
+        const next: Record<string, { name: string; timestamp: number }> = {};
+        for (const [uid, data] of Object.entries(prev)) {
+          if (now - data.timestamp < 3000) {
+            next[uid] = data;
+          } else {
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    }, 1500);
+    return () => clearInterval(interval);
   }, []);
 
   // Send a WebRTC offer for screen sharing to a specific participant
@@ -183,7 +217,6 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
         senderId: user.userId,
       });
 
-      // Send WebRTC offer to every peer in the room
       participantsRef.current.forEach((p) => {
         if (p.user_id !== user.userId) {
           sendWebRTCOfferTo(p.user_id, stream);
@@ -505,6 +538,7 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
     (emoji: string) => {
       const user = currentUserRef.current;
       if (!user) return;
+      playReactionSound();
       triggerReactionAnimation(emoji, user.displayName);
 
       sendBroadcast("REACTION", {
@@ -658,7 +692,6 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
         }
 
         case "REQUEST_SYNC": {
-          // If we are host and someone requests sync, reply with full state
           if (isHostRef.current && payload.userId !== myId) {
             sendBroadcast("SYNC_STATE", {
               watchState: watchStateRef.current,
@@ -666,7 +699,6 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
               hostId: currentUserRef.current?.userId,
             });
 
-            // If we are sharing screen, also send offer to new user
             if (localScreenStreamRef.current && payload.userId) {
               sendWebRTCOfferTo(payload.userId, localScreenStreamRef.current);
             }
@@ -688,6 +720,7 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
 
         case "NEW_MESSAGE": {
           if (payload.message) {
+            playMessageSound();
             setMessages((prev) => {
               if (prev.some((m) => m.id === payload.message.id)) return prev;
               return [...prev, payload.message];
@@ -698,7 +731,21 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
 
         case "REACTION": {
           if (payload.emoji && payload.senderName) {
+            playReactionSound();
             triggerReactionAnimation(payload.emoji, payload.senderName);
+          }
+          break;
+        }
+
+        case "TYPING": {
+          if (payload.userId && payload.userId !== myId && payload.displayName) {
+            setTypingMap((prev) => ({
+              ...prev,
+              [payload.userId]: {
+                name: payload.displayName,
+                timestamp: Date.now(),
+              },
+            }));
           }
           break;
         }
@@ -779,13 +826,11 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
             }
           });
 
-          // Ensure self is in the list
           const hasSelf = activeList.some((p) => p.user_id === user.userId);
           if (!hasSelf && myParticipantRef.current) {
             activeList.push(myParticipantRef.current);
           }
 
-          // Universal host election: participant with earliest joined_at is host
           if (activeList.length > 0) {
             const sortedByJoin = [...activeList].sort(
               (a, b) => new Date(a.joined_at || 0).getTime() - new Date(b.joined_at || 0).getTime()
@@ -804,9 +849,9 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
           if (!isMounted) return;
           newPresences.forEach((p: any) => {
             if (p.user_id !== user.userId) {
+              playJoinSound();
               showToast(`${p.display_name || "A friend"} joined the room`);
 
-              // If we are host, automatically send our state to the newcomer
               if (isHostRef.current) {
                 supabaseChannel?.send({
                   type: "broadcast",
@@ -818,7 +863,6 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
                   },
                 });
 
-                // If sharing screen, send WebRTC offer to new participant
                 if (localScreenStreamRef.current && p.user_id) {
                   sendWebRTCOfferTo(p.user_id, localScreenStreamRef.current);
                 }
@@ -843,6 +887,7 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
         "PARTICIPANT_UPDATE",
         "NEW_MESSAGE",
         "REACTION",
+        "TYPING",
         "QUEUE_ADD",
         "QUEUE_REMOVE",
         "HOST_TRANSFER",
@@ -865,7 +910,6 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
           setIsLoading(false);
           await supabaseChannel?.track(myParticipant);
 
-          // Request state sync from any existing peers
           supabaseChannel?.send({
             type: "broadcast",
             event: "REQUEST_SYNC",
@@ -877,7 +921,6 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
         }
       });
     } else {
-      // Fallback if Supabase not configured
       setConnectionStatus("connected");
       setIsLoading(false);
     }
@@ -890,7 +933,9 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
         supabase?.removeChannel(supabaseChannel).catch(() => {});
       }
     };
-  }, [roomCode]); // ONLY depends on roomCode
+  }, [roomCode]);
+
+  const typingUserNames = Object.values(typingMap).map((t) => t.name);
 
   return {
     currentUser,
@@ -905,6 +950,8 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
     isLoading,
     connectionStatus,
     toastMessage,
+    typingUserNames,
+    sendTyping,
     updateWatchState,
     updateMyParticipantStatus,
     broadcastScreenStream,

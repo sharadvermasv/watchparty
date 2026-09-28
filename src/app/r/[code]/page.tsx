@@ -10,6 +10,7 @@ import { RoomControls } from "@/components/room/RoomControls";
 import { SidePanel } from "@/components/room/SidePanel";
 import { InviteModal } from "@/components/room/InviteModal";
 import { AddMediaModal } from "@/components/room/AddMediaModal";
+import { isSoundEnabled, setSoundEnabled } from "@/lib/audio/soundEffects";
 
 export default function RoomPage() {
   const params = useParams();
@@ -18,6 +19,8 @@ export default function RoomPage() {
   const [activeTab, setActiveTab] = useState<"chat" | "people" | "queue" | null>("chat");
   const [isInviteOpen, setIsInviteOpen] = useState(false);
   const [isAddMediaOpen, setIsAddMediaOpen] = useState(false);
+  const [isFloatingChatOpen, setIsFloatingChatOpen] = useState(false);
+  const [soundEnabled, setSoundEnabledState] = useState<boolean>(() => isSoundEnabled());
 
   const {
     currentUser,
@@ -31,6 +34,8 @@ export default function RoomPage() {
     remoteScreenStream,
     isLoading,
     toastMessage,
+    typingUserNames,
+    sendTyping,
     updateWatchState,
     updateMyParticipantStatus,
     broadcastScreenStream,
@@ -114,6 +119,37 @@ export default function RoomPage() {
     });
   };
 
+  // Video ended -> Auto-play next item from queue if host
+  const handleVideoEnded = useCallback(() => {
+    if (isHost && queue.length > 0) {
+      const nextItem = queue[0];
+      playQueueItem(nextItem);
+    }
+  }, [isHost, queue, playQueueItem]);
+
+  // Clickable timestamp seek
+  const handleSeekTimestamp = useCallback(
+    (seconds: number) => {
+      if (isHost) {
+        updateWatchState({
+          current_time: seconds,
+          is_playing: true,
+        });
+      }
+    },
+    [isHost, updateWatchState]
+  );
+
+  const handleToggleSound = useCallback(() => {
+    const next = !soundEnabled;
+    setSoundEnabled(next);
+    setSoundEnabledState(next);
+  }, [soundEnabled]);
+
+  const handleToggleFloatingChat = useCallback(() => {
+    setIsFloatingChatOpen((prev) => !prev);
+  }, []);
+
   // Active stream: local if this user is sharing, or remote if friend is sharing
   const activeScreenStream = screenStream || remoteScreenStream;
   const isLocallySharing = Boolean(screenStream);
@@ -121,8 +157,11 @@ export default function RoomPage() {
   if (isLoading || !room || !currentUser) {
     return (
       <div className="min-h-screen bg-[#08090B] flex flex-col items-center justify-center text-white">
-        <div className="w-12 h-12 rounded-2xl bg-[#FF5733] flex items-center justify-center font-black text-xl mb-4 animate-bounce">
-          WP
+        <div className="relative mb-4">
+          <div className="absolute -inset-2 bg-gradient-to-r from-[#FF5733] to-[#ff8c42] rounded-2xl blur-lg opacity-75 animate-pulse" />
+          <div className="relative w-12 h-12 rounded-2xl bg-[#FF5733] flex items-center justify-center font-black text-xl shadow-2xl">
+            WP
+          </div>
         </div>
         <p className="text-sm font-semibold tracking-wide">Entering room {roomCode}…</p>
         <p className="text-xs text-[#A7ABB5] mt-1">Connecting to your friends</p>
@@ -156,6 +195,11 @@ export default function RoomPage() {
           isLocallySharing={isLocallySharing}
           floatingReactions={floatingReactions}
           toastMessage={toastMessage}
+          onVideoEnded={handleVideoEnded}
+          messages={messages}
+          isFloatingChatOpen={isFloatingChatOpen}
+          onToggleFloatingChat={handleToggleFloatingChat}
+          onSeekTimestamp={handleSeekTimestamp}
         />
 
         <SidePanel
@@ -173,6 +217,9 @@ export default function RoomPage() {
           onPlayQueueItem={playQueueItem}
           onTransferHost={transferHost}
           onQuickReaction={sendReaction}
+          onSeekTimestamp={handleSeekTimestamp}
+          typingUserNames={typingUserNames}
+          onUserTyping={sendTyping}
         />
       </div>
 
@@ -184,6 +231,8 @@ export default function RoomPage() {
         isSpeaking={isSpeaking}
         activeTab={activeTab}
         queueCount={queue.length}
+        soundEnabled={soundEnabled}
+        isFloatingChatOpen={isFloatingChatOpen}
         onToggleMic={handleToggleMic}
         onToggleCam={handleToggleCam}
         onToggleScreenShare={isScreenSharing ? stopScreenShare : startScreenShare}
@@ -191,6 +240,8 @@ export default function RoomPage() {
         onToggleTab={handleToggleTab}
         onOpenQR={() => setIsInviteOpen(true)}
         onQuickReaction={sendReaction}
+        onToggleSound={handleToggleSound}
+        onToggleFloatingChat={handleToggleFloatingChat}
       />
 
       {/* Invite & Multi-device QR Modal */}

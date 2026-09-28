@@ -1,14 +1,32 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { Play, Pause, Volume2, VolumeX, Maximize, RotateCcw, ShieldAlert, Sparkles, VolumeOff } from "lucide-react";
+import {
+  Play,
+  Pause,
+  Volume2,
+  VolumeX,
+  Maximize,
+  RotateCcw,
+  ShieldAlert,
+  Sparkles,
+  RotateCcw as SkipBack,
+  RotateCw as SkipForward,
+} from "lucide-react";
 import { WatchState, SyncStatus } from "@/types/room";
-import { parseYouTubeVideoId, formatTime, calculateExpectedTime, evaluateSyncAction, getDrift } from "@/lib/sync/driftCalculator";
+import {
+  parseYouTubeVideoId,
+  formatTime,
+  calculateExpectedTime,
+  evaluateSyncAction,
+  getDrift,
+} from "@/lib/sync/driftCalculator";
 
 interface YouTubePlayerProps {
   watchState: WatchState;
   isHost: boolean;
   onUpdateWatchState: (updates: Partial<WatchState>) => void;
+  onVideoEnded?: () => void;
 }
 
 declare global {
@@ -18,7 +36,12 @@ declare global {
   }
 }
 
-export function YouTubePlayer({ watchState, isHost, onUpdateWatchState }: YouTubePlayerProps) {
+export function YouTubePlayer({
+  watchState,
+  isHost,
+  onUpdateWatchState,
+  onVideoEnded,
+}: YouTubePlayerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<any>(null);
   const [isPlayerReady, setIsPlayerReady] = useState(false);
@@ -27,6 +50,7 @@ export function YouTubePlayer({ watchState, isHost, onUpdateWatchState }: YouTub
   const [volume, setVolume] = useState(80);
   const [isMuted, setIsMuted] = useState(false);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>("synced");
+  const [activePlaybackRate, setActivePlaybackRate] = useState<number>(1.0);
   const [showControls, setShowControls] = useState(true);
   const [hostWarning, setHostWarning] = useState<string | null>(null);
   const [isAutoplayBlocked, setIsAutoplayBlocked] = useState(false);
@@ -40,6 +64,9 @@ export function YouTubePlayer({ watchState, isHost, onUpdateWatchState }: YouTub
 
   const onUpdateWatchStateRef = useRef(onUpdateWatchState);
   onUpdateWatchStateRef.current = onUpdateWatchState;
+
+  const onVideoEndedRef = useRef(onVideoEnded);
+  onVideoEndedRef.current = onVideoEnded;
 
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isSyncingRef = useRef(false);
@@ -89,8 +116,8 @@ export function YouTubePlayer({ watchState, isHost, onUpdateWatchState }: YouTub
             event.target.seekTo(expected, true);
 
             if (watchStateRef.current.is_playing) {
-              const playPromise = event.target.playVideo();
-              // Check if autoplay was blocked by browser
+              event.target.playVideo();
+              // Check if autoplay was blocked by mobile browser
               setTimeout(() => {
                 const state = event.target.getPlayerState?.();
                 if (state !== 1 && state !== 3) {
@@ -102,12 +129,20 @@ export function YouTubePlayer({ watchState, isHost, onUpdateWatchState }: YouTub
             }
           },
           onStateChange: (event: any) => {
+            // 0: ENDED, 1: PLAYING, 2: PAUSED, 3: BUFFERING
             if (event.data === 1) {
               setIsAutoplayBlocked(false);
             }
 
+            if (event.data === 0) {
+              // Video Ended -> trigger queue auto-play
+              if (isHostRef.current) {
+                onVideoEndedRef.current?.();
+              }
+            }
+
             if (!isHostRef.current) return;
-            // 1: PLAYING, 2: PAUSED
+
             if (event.data === 1 && !watchStateRef.current.is_playing) {
               onUpdateWatchStateRef.current({
                 is_playing: true,
@@ -169,6 +204,7 @@ export function YouTubePlayer({ watchState, isHost, onUpdateWatchState }: YouTub
   useEffect(() => {
     if (isHost || !isPlayerReady || !playerRef.current || !watchState.media_url) {
       setSyncStatus("synced");
+      setActivePlaybackRate(1.0);
       return;
     }
 
@@ -184,15 +220,18 @@ export function YouTubePlayer({ watchState, isHost, onUpdateWatchState }: YouTub
 
         if (action.type === "in_sync") {
           setSyncStatus("synced");
+          setActivePlaybackRate(1.0);
           playerRef.current.setPlaybackRate?.(1.0);
         } else if (action.type === "soft_sync") {
           setSyncStatus("syncing");
+          setActivePlaybackRate(action.targetRate);
           playerRef.current.setPlaybackRate?.(action.targetRate);
         } else if (action.type === "hard_sync") {
           setSyncStatus("syncing");
           isSyncingRef.current = true;
           playerRef.current.seekTo(action.targetTime, true);
           playerRef.current.setPlaybackRate?.(1.0);
+          setActivePlaybackRate(1.0);
           setTimeout(() => {
             isSyncingRef.current = false;
             setSyncStatus("synced");
@@ -240,26 +279,26 @@ export function YouTubePlayer({ watchState, isHost, onUpdateWatchState }: YouTub
       playerRef.current.pauseVideo();
     }
     playerRef.current.setPlaybackRate?.(1.0);
+    setActivePlaybackRate(1.0);
     setSyncStatus("synced");
   }, []);
 
   // Play / Pause toggle
-  const handleTogglePlay = () => {
+  const handleTogglePlay = useCallback(() => {
     if (!playerRef.current) return;
 
-    // If mobile blocked or paused while host is playing, allow user to resume locally
-    if (!isHost && watchState.is_playing) {
+    if (!isHostRef.current && watchStateRef.current.is_playing) {
       handleManualPlay();
       return;
     }
 
-    if (!isHost) {
+    if (!isHostRef.current) {
       setHostWarning("Only the host can pause/resume playback.");
       setTimeout(() => setHostWarning(null), 3000);
       return;
     }
 
-    if (watchState.is_playing) {
+    if (watchStateRef.current.is_playing) {
       playerRef.current.pauseVideo();
       onUpdateWatchStateRef.current({
         is_playing: false,
@@ -273,7 +312,28 @@ export function YouTubePlayer({ watchState, isHost, onUpdateWatchState }: YouTub
         current_time: playerRef.current.getCurrentTime(),
       });
     }
-  };
+  }, [handleManualPlay]);
+
+  // Quick Skip Forward / Backward 10s (Host only)
+  const handleSkip = useCallback(
+    (deltaSeconds: number) => {
+      if (!isHostRef.current) {
+        setHostWarning("Only the host can skip video time.");
+        setTimeout(() => setHostWarning(null), 3000);
+        return;
+      }
+      if (!playerRef.current) return;
+
+      const current = playerRef.current.getCurrentTime() || 0;
+      const target = Math.max(0, Math.min(duration, current + deltaSeconds));
+      playerRef.current.seekTo(target, true);
+      setCurrentTime(target);
+      onUpdateWatchStateRef.current({
+        current_time: target,
+      });
+    },
+    [duration]
+  );
 
   // Seek bar
   const handleSeekChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -307,7 +367,7 @@ export function YouTubePlayer({ watchState, isHost, onUpdateWatchState }: YouTub
     }
   };
 
-  const handleToggleMute = () => {
+  const handleToggleMute = useCallback(() => {
     if (isMuted) {
       setIsMuted(false);
       playerRef.current?.unMute();
@@ -316,16 +376,16 @@ export function YouTubePlayer({ watchState, isHost, onUpdateWatchState }: YouTub
       setIsMuted(true);
       playerRef.current?.mute();
     }
-  };
+  }, [isMuted, volume]);
 
-  const handleFullscreen = () => {
+  const handleFullscreen = useCallback(() => {
     if (!containerRef.current) return;
     if (document.fullscreenElement) {
-      document.exitFullscreen();
+      document.exitFullscreen().catch(() => {});
     } else {
-      containerRef.current.requestFullscreen();
+      containerRef.current.requestFullscreen().catch(() => {});
     }
-  };
+  }, []);
 
   const handleUserActivity = () => {
     setShowControls(true);
@@ -336,6 +396,35 @@ export function YouTubePlayer({ watchState, isHost, onUpdateWatchState }: YouTub
       }
     }, 3500);
   };
+
+  // Keyboard Shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if user is typing in a text field
+      const activeTag = (document.activeElement?.tagName || "").toLowerCase();
+      if (activeTag === "input" || activeTag === "textarea") return;
+
+      if (e.code === "Space") {
+        e.preventDefault();
+        handleTogglePlay();
+      } else if (e.code === "KeyM") {
+        e.preventDefault();
+        handleToggleMute();
+      } else if (e.code === "KeyF") {
+        e.preventDefault();
+        handleFullscreen();
+      } else if (e.code === "ArrowLeft") {
+        e.preventDefault();
+        handleSkip(-10);
+      } else if (e.code === "ArrowRight") {
+        e.preventDefault();
+        handleSkip(10);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [handleTogglePlay, handleToggleMute, handleFullscreen, handleSkip]);
 
   const progressPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
 
@@ -348,24 +437,28 @@ export function YouTubePlayer({ watchState, isHost, onUpdateWatchState }: YouTub
     >
       <div id="yt-player-target" className="w-full h-full" />
 
-      {/* Mobile Autoplay Blocked Banner */}
+      {/* Mobile Autoplay Blocked Banner with Ember Glow */}
       {isAutoplayBlocked && (
         <div
           onClick={handleManualPlay}
-          className="absolute inset-0 z-50 bg-black/75 backdrop-blur-sm flex flex-col items-center justify-center cursor-pointer p-6 text-center animate-fade-in"
+          className="absolute inset-0 z-50 bg-black/80 backdrop-blur-md flex flex-col items-center justify-center cursor-pointer p-6 text-center animate-fade-in"
         >
-          <div className="w-16 h-16 rounded-full bg-[#FF5733] hover:bg-[#ff6e4d] flex items-center justify-center text-white mb-3 shadow-2xl shadow-[#FF5733]/40 transition transform hover:scale-105 active:scale-95">
-            <Play className="w-8 h-8 fill-current ml-1" />
+          <div className="relative">
+            <div className="absolute -inset-2 bg-gradient-to-r from-[#FF5733] to-[#ff8c42] rounded-full blur-xl opacity-75 animate-pulse" />
+            <div className="relative w-20 h-20 rounded-full bg-[#FF5733] hover:bg-[#ff6e4d] flex items-center justify-center text-white mb-4 shadow-2xl transition transform hover:scale-105 active:scale-95">
+              <Play className="w-10 h-10 fill-current ml-1" />
+            </div>
           </div>
-          <p className="text-base font-bold text-white tracking-tight">Tap to Start Watching</p>
-          <p className="text-xs text-[#A7ABB5] mt-1 max-w-xs">
-            Mobile browsers require a tap to enable synchronized audio and video.
+          <p className="text-lg font-bold text-white tracking-tight">Tap to Start Watching</p>
+          <p className="text-xs text-[#A7ABB5] mt-1.5 max-w-xs leading-relaxed">
+            Mobile browsers require a touch gesture to enable synchronized audio & video playback.
           </p>
         </div>
       )}
 
+      {/* Host warning notification */}
       {hostWarning && (
-        <div className="absolute top-6 left-1/2 -translate-x-1/2 z-50 bg-[#151820]/95 border border-[#FF5733]/40 text-[#FF5733] px-4 py-2 rounded-full text-xs font-medium flex items-center gap-2 shadow-xl backdrop-blur-md animate-fade-in">
+        <div className="absolute top-6 left-1/2 -translate-x-1/2 z-50 bg-[#151820]/95 border border-[#FF5733]/40 text-[#FF5733] px-4 py-2 rounded-full text-xs font-medium flex items-center gap-2 shadow-2xl backdrop-blur-md animate-fade-in">
           <ShieldAlert className="w-4 h-4" />
           <span>{hostWarning}</span>
         </div>
@@ -373,14 +466,14 @@ export function YouTubePlayer({ watchState, isHost, onUpdateWatchState }: YouTub
 
       {/* Cinema Overlay & Controls */}
       <div
-        className={`absolute inset-0 bg-gradient-to-t from-black/85 via-transparent to-black/30 transition-opacity duration-300 pointer-events-none ${
+        className={`absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-black/40 transition-opacity duration-300 pointer-events-none ${
           showControls ? "opacity-100" : "opacity-0"
         }`}
       >
         {/* Top bar info */}
         <div className="absolute top-4 left-4 right-4 sm:left-6 sm:right-6 flex items-center justify-between pointer-events-auto">
           <div className="flex items-center gap-2 sm:gap-3 min-w-0 mr-2">
-            <span className="text-[10px] sm:text-xs uppercase tracking-widest font-semibold px-2 sm:px-2.5 py-1 rounded bg-[#FF5733]/20 text-[#FF5733] border border-[#FF5733]/30 shrink-0">
+            <span className="text-[10px] sm:text-xs uppercase tracking-widest font-semibold px-2.5 py-1 rounded bg-[#FF5733]/20 text-[#FF5733] border border-[#FF5733]/30 shrink-0">
               Watch Together
             </span>
             <h2 className="text-xs sm:text-sm font-medium text-white/90 truncate max-w-[140px] sm:max-w-md">
@@ -390,19 +483,19 @@ export function YouTubePlayer({ watchState, isHost, onUpdateWatchState }: YouTub
 
           <div className="flex items-center gap-2 shrink-0">
             {syncStatus === "synced" ? (
-              <span className="flex items-center gap-1.5 text-[11px] sm:text-xs text-emerald-400 bg-emerald-950/60 border border-emerald-500/30 px-2 sm:px-2.5 py-1 rounded-full">
+              <span className="flex items-center gap-1.5 text-[11px] sm:text-xs text-emerald-400 bg-emerald-950/60 border border-emerald-500/30 px-2.5 py-1 rounded-full backdrop-blur-md">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                 Synced
               </span>
             ) : (
               <div className="flex items-center gap-2">
-                <span className="flex items-center gap-1.5 text-[11px] sm:text-xs text-amber-400 bg-amber-950/60 border border-amber-500/30 px-2 sm:px-2.5 py-1 rounded-full">
+                <span className="flex items-center gap-1.5 text-[11px] sm:text-xs text-amber-400 bg-amber-950/60 border border-amber-500/30 px-2.5 py-1 rounded-full backdrop-blur-md">
                   <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
-                  Syncing…
+                  {activePlaybackRate !== 1.0 ? `${activePlaybackRate}x Sync` : "Syncing…"}
                 </span>
                 <button
                   onClick={handleSyncMe}
-                  className="flex items-center gap-1 text-[11px] sm:text-xs bg-[#FF5733] hover:bg-[#ff6e4d] text-white px-2 sm:px-2.5 py-1 rounded-full font-medium transition cursor-pointer shadow-lg"
+                  className="flex items-center gap-1 text-[11px] sm:text-xs bg-[#FF5733] hover:bg-[#ff6e4d] text-white px-2.5 py-1 rounded-full font-medium transition cursor-pointer shadow-lg"
                 >
                   <RotateCcw className="w-3 h-3" />
                   Sync me
@@ -413,7 +506,8 @@ export function YouTubePlayer({ watchState, isHost, onUpdateWatchState }: YouTub
         </div>
 
         {/* Bottom Cinema Control Strip */}
-        <div className="absolute bottom-4 left-4 right-4 sm:left-6 sm:right-6 flex flex-col gap-2 pointer-events-auto">
+        <div className="absolute bottom-4 left-4 right-4 sm:left-6 sm:right-6 flex flex-col gap-2.5 pointer-events-auto">
+          {/* Progress Seek Bar */}
           <div className="relative group/track flex items-center w-full h-4 sm:h-3 cursor-pointer">
             <input
               type="range"
@@ -424,24 +518,25 @@ export function YouTubePlayer({ watchState, isHost, onUpdateWatchState }: YouTub
               onChange={handleSeekChange}
               className="absolute inset-0 w-full h-full opacity-0 z-20 cursor-pointer"
             />
-            <div className="w-full h-1.5 bg-white/20 rounded-full overflow-hidden transition-all group-hover/track:h-2">
+            <div className="w-full h-1.5 bg-white/20 rounded-full overflow-hidden transition-all group-hover/track:h-2 backdrop-blur-sm">
               <div
-                className="h-full bg-[#FF5733] relative rounded-full"
+                className="h-full bg-gradient-to-r from-[#FF5733] to-[#ff7b47] relative rounded-full"
                 style={{ width: `${progressPercent}%` }}
               />
             </div>
             <div
-              className="absolute w-3.5 h-3.5 bg-white rounded-full shadow-md pointer-events-none transition-all scale-0 group-hover/track:scale-100"
+              className="absolute w-3.5 h-3.5 bg-white rounded-full shadow-lg pointer-events-none transition-all scale-0 group-hover/track:scale-100"
               style={{ left: `calc(${progressPercent}% - 7px)` }}
             />
           </div>
 
-          <div className="flex items-center justify-between pt-1">
-            <div className="flex items-center gap-2 sm:gap-4">
+          <div className="flex items-center justify-between pt-0.5">
+            <div className="flex items-center gap-2 sm:gap-3">
+              {/* Play / Pause */}
               <button
                 onClick={handleTogglePlay}
-                className="w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center bg-white/10 hover:bg-[#FF5733] text-white transition cursor-pointer"
-                title={isHost ? (watchState.is_playing ? "Pause" : "Play") : "Play/Sync Video"}
+                className="w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center bg-white/10 hover:bg-[#FF5733] text-white transition cursor-pointer backdrop-blur-md"
+                title={isHost ? (watchState.is_playing ? "Pause (Space)" : "Play (Space)") : "Play/Sync Video"}
               >
                 {watchState.is_playing ? (
                   <Pause className="w-4 h-4 sm:w-5 sm:h-5 fill-current" />
@@ -450,16 +545,39 @@ export function YouTubePlayer({ watchState, isHost, onUpdateWatchState }: YouTub
                 )}
               </button>
 
-              <div className="text-[11px] sm:text-xs text-white/80 font-mono tracking-tight">
+              {/* Host Skip -10s / +10s */}
+              {isHost && (
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => handleSkip(-10)}
+                    className="p-1.5 text-white/70 hover:text-white hover:bg-white/10 rounded-lg transition cursor-pointer"
+                    title="Skip backward 10s (←)"
+                  >
+                    <SkipBack className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => handleSkip(10)}
+                    className="p-1.5 text-white/70 hover:text-white hover:bg-white/10 rounded-lg transition cursor-pointer"
+                    title="Skip forward 10s (→)"
+                  >
+                    <SkipForward className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+
+              {/* Current Time / Duration */}
+              <div className="text-[11px] sm:text-xs text-white/80 font-mono tracking-tight pl-1">
                 <span className="text-white font-medium">{formatTime(currentTime)}</span>
                 <span className="text-white/40 mx-1">/</span>
                 <span className="text-white/60">{formatTime(duration)}</span>
               </div>
 
+              {/* Volume Slider */}
               <div className="hidden sm:flex items-center gap-2 group/volume pl-2">
                 <button
                   onClick={handleToggleMute}
                   className="text-white/70 hover:text-white transition cursor-pointer"
+                  title="Toggle Mute (M)"
                 >
                   {isMuted || volume === 0 ? (
                     <VolumeX className="w-4 h-4" />
@@ -482,17 +600,18 @@ export function YouTubePlayer({ watchState, isHost, onUpdateWatchState }: YouTub
               {!isHost && (
                 <button
                   onClick={handleSyncMe}
-                  className="text-[11px] sm:text-xs text-white/60 hover:text-white flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 transition cursor-pointer"
+                  className="text-[11px] sm:text-xs text-white/70 hover:text-white flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/15 backdrop-blur-md transition cursor-pointer"
                 >
                   <Sparkles className="w-3 h-3 text-[#FF5733]" />
                   Sync me
                 </button>
               )}
 
+              {/* Fullscreen Button */}
               <button
                 onClick={handleFullscreen}
                 className="p-1.5 sm:p-2 text-white/70 hover:text-white hover:bg-white/10 rounded-lg transition cursor-pointer"
-                title="Fullscreen"
+                title="Fullscreen (F)"
               >
                 <Maximize className="w-4 h-4" />
               </button>

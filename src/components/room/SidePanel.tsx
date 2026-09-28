@@ -1,19 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import {
   MessageSquare,
   Users,
   ListVideo,
   X,
   Send,
-  Mic,
-  MicOff,
   Crown,
   Play,
   Trash2,
   Plus,
-  Monitor,
 } from "lucide-react";
 import { Participant, ChatMessage, QueueItem } from "@/types/room";
 
@@ -32,9 +29,52 @@ interface SidePanelProps {
   onPlayQueueItem: (item: QueueItem) => void;
   onTransferHost: (userId: string) => void;
   onQuickReaction: (emoji: string) => void;
+  onSeekTimestamp?: (seconds: number) => void;
+  typingUserNames?: string[];
+  onUserTyping?: () => void;
 }
 
 const QUICK_REACTIONS = ["😂", "❤️", "😭", "🔥", "💀", "👀"];
+
+// Helper to convert MM:SS or HH:MM:SS string to seconds
+function parseTimestampToSeconds(ts: string): number | null {
+  const parts = ts.split(":").map(Number);
+  if (parts.some(isNaN)) return null;
+  if (parts.length === 2) {
+    return parts[0] * 60 + parts[1];
+  } else if (parts.length === 3) {
+    return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  }
+  return null;
+}
+
+// Render message text with clickable timestamp badges
+function renderFormattedMessage(
+  text: string,
+  onSeek?: (sec: number) => void
+) {
+  const regex = /(\b(?:\d{1,2}:)?\d{1,2}:\d{2}\b)/g;
+  const parts = text.split(regex);
+
+  return parts.map((part, i) => {
+    if (regex.test(part)) {
+      const seconds = parseTimestampToSeconds(part);
+      if (seconds !== null && onSeek) {
+        return (
+          <button
+            key={i}
+            onClick={() => onSeek(seconds)}
+            className="inline-flex items-center px-1.5 py-0.5 mx-0.5 rounded bg-[#FF5733]/20 hover:bg-[#FF5733] text-[#FF5733] hover:text-white font-mono text-[11px] font-semibold transition cursor-pointer"
+            title={`Jump to ${part}`}
+          >
+            {part}
+          </button>
+        );
+      }
+    }
+    return <span key={i}>{part}</span>;
+  });
+}
 
 export function SidePanel({
   activeTab,
@@ -51,11 +91,30 @@ export function SidePanel({
   onPlayQueueItem,
   onTransferHost,
   onQuickReaction,
+  onSeekTimestamp,
+  typingUserNames = [],
+  onUserTyping,
 }: SidePanelProps) {
   const [chatInput, setChatInput] = useState("");
   const [queueUrlInput, setQueueUrlInput] = useState("");
+  const chatBottomRef = useRef<HTMLDivElement>(null);
+  const typingTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  if (!activeTab) return null;
+  // Auto-scroll chat to latest message
+  useEffect(() => {
+    if (activeTab === "chat") {
+      chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [messages, activeTab]);
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setChatInput(e.target.value);
+    if (onUserTyping) {
+      if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+      onUserTyping();
+      typingTimerRef.current = setTimeout(() => {}, 2000);
+    }
+  };
 
   const handleSendChat = (e: React.FormEvent) => {
     e.preventDefault();
@@ -71,8 +130,10 @@ export function SidePanel({
     setQueueUrlInput("");
   };
 
+  if (!activeTab) return null;
+
   return (
-    <aside className="w-full md:w-80 h-[50vh] md:h-full border-t md:border-t-0 md:border-l border-white/10 bg-[#111318] flex flex-col shrink-0 z-30 transition-all">
+    <aside className="w-full md:w-80 h-[50vh] md:h-full border-t md:border-t-0 md:border-l border-white/10 bg-[#111318]/95 backdrop-blur-xl flex flex-col shrink-0 z-30 transition-all">
       {/* Panel Header */}
       <div className="h-12 border-b border-white/10 px-4 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2">
@@ -136,7 +197,7 @@ export function SidePanel({
                           >
                             {m.participant_name}
                           </span>
-                          <span className="text-[9px] text-white/30">
+                          <span className="text-[9px] text-white/30 font-mono">
                             {new Date(m.created_at).toLocaleTimeString([], {
                               hour: "2-digit",
                               minute: "2-digit",
@@ -144,14 +205,29 @@ export function SidePanel({
                           </span>
                         </div>
                         <p className="text-xs text-white/80 mt-0.5 break-words leading-relaxed">
-                          {m.message}
+                          {renderFormattedMessage(m.message, onSeekTimestamp)}
                         </p>
                       </div>
                     </div>
                   );
                 })
               )}
+              <div ref={chatBottomRef} />
             </div>
+
+            {/* Typing Indicator */}
+            {typingUserNames.length > 0 && (
+              <div className="px-4 py-1 text-[11px] text-[#A7ABB5] italic flex items-center gap-1.5 bg-[#0e1014]/60">
+                <span className="flex gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#FF5733] animate-bounce" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#FF5733] animate-bounce [animation-delay:0.15s]" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#FF5733] animate-bounce [animation-delay:0.3s]" />
+                </span>
+                <span>
+                  {typingUserNames.join(", ")} {typingUserNames.length === 1 ? "is" : "are"} typing…
+                </span>
+              </div>
+            )}
 
             {/* Quick Reactions strip */}
             <div className="px-3 py-1.5 border-t border-white/5 bg-[#0e1014] flex items-center justify-between">
@@ -171,9 +247,9 @@ export function SidePanel({
               <div className="relative flex items-center">
                 <input
                   type="text"
-                  placeholder="Say something…"
+                  placeholder="Say something (e.g. check 01:23)…"
                   value={chatInput}
-                  onChange={(e) => setChatInput(e.target.value)}
+                  onChange={handleInputChange}
                   className="w-full bg-[#08090B] border border-white/10 focus:border-[#FF5733] rounded-xl pl-3.5 pr-10 py-2 text-xs text-white placeholder-white/30 focus:outline-none transition"
                 />
                 <button
@@ -212,7 +288,6 @@ export function SidePanel({
                       }`}
                     >
                       {p.avatar || "🍿"}
-                      {/* Status dot */}
                       <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-[#111318]" />
                     </div>
 
@@ -229,7 +304,7 @@ export function SidePanel({
                         )}
                       </div>
 
-                      {/* Presence status tags */}
+                      {/* Status tags */}
                       <div className="flex items-center gap-1.5 mt-0.5">
                         {p.is_sharing && (
                           <span className="text-[10px] font-medium text-red-400 bg-red-400/10 px-1.5 py-0.2 rounded flex items-center gap-0.5">
@@ -270,7 +345,7 @@ export function SidePanel({
                 <div className="py-12 text-center text-[#6B7280]">
                   <p className="text-xs">No videos in queue.</p>
                   <p className="text-[11px] mt-1 text-[#A7ABB5]">
-                    Add a YouTube link below to line up videos!
+                    Paste a YouTube link below to line up videos!
                   </p>
                 </div>
               ) : (

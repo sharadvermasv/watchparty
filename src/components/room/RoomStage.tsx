@@ -1,10 +1,10 @@
 "use client";
 
-import { WatchState, FloatingReaction } from "@/types/room";
+import { useState } from "react";
+import { WatchState, FloatingReaction, ChatMessage } from "@/types/room";
 import { YouTubePlayer } from "@/components/video/YouTubePlayer";
 import { ScreenShareViewer } from "@/components/video/ScreenShareViewer";
-import { Film, Monitor, Copy, Check, Sparkles } from "lucide-react";
-import { useState } from "react";
+import { Film, Monitor, Copy, Check, Sparkles, MessageSquare, X } from "lucide-react";
 
 interface RoomStageProps {
   watchState: WatchState;
@@ -18,6 +18,11 @@ interface RoomStageProps {
   isLocallySharing?: boolean;
   floatingReactions: FloatingReaction[];
   toastMessage: string | null;
+  onVideoEnded?: () => void;
+  messages?: ChatMessage[];
+  isFloatingChatOpen?: boolean;
+  onToggleFloatingChat?: () => void;
+  onSeekTimestamp?: (seconds: number) => void;
 }
 
 export function RoomStage({
@@ -32,6 +37,11 @@ export function RoomStage({
   isLocallySharing = false,
   floatingReactions,
   toastMessage,
+  onVideoEnded,
+  messages = [],
+  isFloatingChatOpen = false,
+  onToggleFloatingChat,
+  onSeekTimestamp,
 }: RoomStageProps) {
   const [copied, setCopied] = useState(false);
 
@@ -41,6 +51,9 @@ export function RoomStage({
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
+
+  // Last 5 messages for floating overlay
+  const recentMessages = messages.slice(-5);
 
   return (
     <div className="relative flex-1 w-full h-full bg-[#08090B] flex items-center justify-center overflow-hidden">
@@ -60,7 +73,7 @@ export function RoomStage({
             className="reaction-bubble flex flex-col items-center"
             style={{
               left: `${rx.xPercent}%`,
-              bottom: "10%",
+              bottom: "12%",
             }}
           >
             <span className="text-4xl filter drop-shadow-md">{rx.emoji}</span>
@@ -71,12 +84,43 @@ export function RoomStage({
         ))}
       </div>
 
+      {/* Floating Live Stream Chat Overlay (Mobile & Cinema mode) */}
+      {isFloatingChatOpen && recentMessages.length > 0 && (
+        <div className="absolute bottom-20 left-4 z-40 max-w-[280px] sm:max-w-xs pointer-events-auto flex flex-col gap-1.5 animate-fade-in">
+          <div className="flex items-center justify-between px-2 py-1 bg-black/40 backdrop-blur-md rounded-t-lg border-b border-white/10 text-[10px] text-white/60">
+            <span className="flex items-center gap-1">
+              <MessageSquare className="w-3 h-3 text-[#FF5733]" /> Live Stream Chat
+            </span>
+            {onToggleFloatingChat && (
+              <button
+                onClick={onToggleFloatingChat}
+                className="hover:text-white transition cursor-pointer"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+          <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+            {recentMessages.map((m) => (
+              <div
+                key={m.id}
+                className="bg-black/60 backdrop-blur-md border border-white/10 rounded-xl px-2.5 py-1.5 text-xs shadow-lg animate-fade-in"
+              >
+                <span className="font-bold text-[#FF5733] mr-1.5">{m.participant_name}:</span>
+                <span className="text-white/90">{m.message}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Mode A: Watch Together */}
       {watchState.mode === "watch" && watchState.media_url ? (
         <YouTubePlayer
           watchState={watchState}
           isHost={isHost}
           onUpdateWatchState={onUpdateWatchState}
+          onVideoEnded={onVideoEnded}
         />
       ) : watchState.mode === "screen" ? (
         /* Mode B: Screen Share */
@@ -91,8 +135,11 @@ export function RoomStage({
       ) : (
         /* Empty Room State */
         <div className="max-w-md w-full p-8 mx-auto text-center flex flex-col items-center animate-fade-in">
-          <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-[#FF5733]/20 to-[#8B5CF6]/20 border border-white/10 flex items-center justify-center mb-6 shadow-xl">
-            <Sparkles className="w-8 h-8 text-[#FF5733]" />
+          <div className="relative mb-6">
+            <div className="absolute -inset-2 bg-gradient-to-r from-[#FF5733]/30 to-[#8B5CF6]/30 rounded-2xl blur-xl" />
+            <div className="relative w-16 h-16 rounded-2xl bg-[#151820] border border-white/10 flex items-center justify-center shadow-2xl">
+              <Sparkles className="w-8 h-8 text-[#FF5733]" />
+            </div>
           </div>
 
           <h2 className="text-2xl font-bold text-white mb-2 tracking-tight">
@@ -105,7 +152,7 @@ export function RoomStage({
           {/* Quick invite link */}
           <button
             onClick={handleCopyLink}
-            className="flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/10 text-white/90 hover:text-white px-4 py-2 rounded-xl text-xs font-semibold mb-8 transition cursor-pointer"
+            className="flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/10 text-white/90 hover:text-white px-4 py-2 rounded-xl text-xs font-semibold mb-8 transition cursor-pointer shadow-md"
           >
             {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
             <span>{copied ? "Link Copied!" : "Copy Invite Link"}</span>
