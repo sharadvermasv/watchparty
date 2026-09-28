@@ -50,12 +50,16 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
   const [connectionStatus, setConnectionStatus] = useState<"connecting" | "connected" | "error">("connecting");
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Stable references
+  // Stable references for async and event callbacks
   const currentUserRef = useRef<UserSession | null>(null);
   currentUserRef.current = currentUser;
 
   const roomRef = useRef<Room | null>(null);
   roomRef.current = room;
+
+  const isHost = Boolean(room && currentUser && room.host_id === currentUser.userId);
+  const isHostRef = useRef(isHost);
+  isHostRef.current = isHost;
 
   const watchStateRef = useRef<WatchState>(watchState);
   watchStateRef.current = watchState;
@@ -72,9 +76,6 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
   const localScreenStreamRef = useRef<MediaStream | null>(null);
   const peerConnectionsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
   const pendingCandidatesRef = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
-
-  // Determine host: either room creator or earliest joined participant
-  const isHost = Boolean(room && currentUser && room.host_id === currentUser.userId);
 
   const showToast = useCallback((msg: string) => {
     setToastMessage(msg);
@@ -122,9 +123,56 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
     [roomCode]
   );
 
-  // Broadcast WebRTC MediaStream for Screen Sharing
+  // Send a WebRTC offer for screen sharing to a specific participant
+  const sendWebRTCOfferTo = useCallback(
+    async (targetUserId: string, stream: MediaStream) => {
+      const user = currentUserRef.current;
+      if (!user || targetUserId === user.userId) return;
+
+      try {
+        // Close existing connection if any
+        const existing = peerConnectionsRef.current.get(targetUserId);
+        if (existing) {
+          try { existing.close(); } catch {}
+        }
+
+        const pc = new RTCPeerConnection(ICE_SERVERS);
+        peerConnectionsRef.current.set(targetUserId, pc);
+
+        stream.getTracks().forEach((track) => {
+          pc.addTrack(track, stream);
+        });
+
+        pc.onicecandidate = (e) => {
+          if (e.candidate) {
+            publishNetworkMessage({
+              type: "WEBRTC_ICE",
+              targetId: targetUserId,
+              senderId: user.userId,
+              candidate: e.candidate.toJSON(),
+            });
+          }
+        };
+
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+
+        publishNetworkMessage({
+          type: "WEBRTC_OFFER",
+          targetId: targetUserId,
+          senderId: user.userId,
+          sdp: offer,
+        });
+      } catch (err) {
+        console.warn("Error sending WebRTC offer to", targetUserId, err);
+      }
+    },
+    [publishNetworkMessage]
+  );
+
+  // Broadcast WebRTC MediaStream for Screen Sharing to all participants
   const broadcastScreenStream = useCallback(
-    async (stream: MediaStream) => {
+    (stream: MediaStream) => {
       localScreenStreamRef.current = stream;
       const user = currentUserRef.current;
       if (!user) return;
@@ -134,44 +182,13 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
         senderId: user.userId,
       });
 
-      // For every other participant, create a WebRTC PeerConnection and send Offer
-      participantsRef.current.forEach(async (p) => {
-        if (p.user_id === user.userId) return;
-
-        try {
-          const pc = new RTCPeerConnection(ICE_SERVERS);
-          peerConnectionsRef.current.set(p.user_id, pc);
-
-          stream.getTracks().forEach((track) => {
-            pc.addTrack(track, stream);
-          });
-
-          pc.onicecandidate = (e) => {
-            if (e.candidate) {
-              publishNetworkMessage({
-                type: "WEBRTC_ICE",
-                targetId: p.user_id,
-                senderId: user.userId,
-                candidate: e.candidate.toJSON(),
-              });
-            }
-          };
-
-          const offer = await pc.createOffer();
-          await pc.setLocalDescription(offer);
-
-          publishNetworkMessage({
-            type: "WEBRTC_OFFER",
-            targetId: p.user_id,
-            senderId: user.userId,
-            sdp: offer,
-          });
-        } catch (err) {
-          console.warn("Error creating WebRTC offer for participant:", p.user_id, err);
+      participantsRef.current.forEach((p) => {
+        if (p.user_id !== user.userId) {
+          sendWebRTCOfferTo(p.user_id, stream);
         }
       });
     },
-    [publishNetworkMessage]
+    [publishNetworkMessage, sendWebRTCOfferTo]
   );
 
   // Stop broadcasting screen stream
@@ -190,7 +207,7 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
     });
   }, [publishNetworkMessage]);
 
-  // Handle incoming data payload
+  // Handle incoming network data payload (stable callback with zero churn)
   const handleNetworkData = useCallback(
     async (data: any) => {
       if (!data || !data.type) return;
@@ -221,7 +238,7 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
               updated = [...prev, { ...incomingP, last_seen: now }];
             }
 
-            // Elect host: participant with the earliest joined_at is canonically the host!
+            // Universal Host: Earliest joined participant is host
             const sortedByJoin = [...updated].sort(
               (a, b) => new Date(a.joined_at).getTime() - new Date(b.joined_at).getTime()
             );
@@ -238,48 +255,19 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
             return updated;
           });
 
-          // If someone sent HELLO, reply with WELCOME containing room & watch state
-          if (data.type === "HELLO" && isHost) {
+          // If a new peer says HELLO and we are host, reply with full room state & participants
+          if (data.type === "HELLO" && isHostRef.current) {
             publishNetworkMessage({
               type: "WELCOME",
               watchState: watchStateRef.current,
               queue: queueRef.current,
+              participants: participantsRef.current,
               hostId: currentUserRef.current?.userId,
             });
 
-            // If we are currently sharing screen, send offer to the new participant
+            // If we are sharing screen, connect to the new peer immediately
             if (localScreenStreamRef.current) {
-              try {
-                const pc = new RTCPeerConnection(ICE_SERVERS);
-                peerConnectionsRef.current.set(incomingP.user_id, pc);
-
-                localScreenStreamRef.current.getTracks().forEach((track) => {
-                  pc.addTrack(track, localScreenStreamRef.current!);
-                });
-
-                pc.onicecandidate = (e) => {
-                  if (e.candidate) {
-                    publishNetworkMessage({
-                      type: "WEBRTC_ICE",
-                      targetId: incomingP.user_id,
-                      senderId: myId,
-                      candidate: e.candidate.toJSON(),
-                    });
-                  }
-                };
-
-                const offer = await pc.createOffer();
-                await pc.setLocalDescription(offer);
-
-                publishNetworkMessage({
-                  type: "WEBRTC_OFFER",
-                  targetId: incomingP.user_id,
-                  senderId: myId,
-                  sdp: offer,
-                });
-              } catch (e) {
-                console.warn("Error sending screen offer to new participant:", e);
-              }
+              sendWebRTCOfferTo(incomingP.user_id, localScreenStreamRef.current);
             }
           }
           break;
@@ -289,15 +277,27 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
           if (data.hostId) {
             setRoom((cur) => (cur ? { ...cur, host_id: data.hostId } : cur));
           }
-          if (data.watchState && data.watchState.updated_at) {
-            setWatchState((cur) => {
-              if (new Date(data.watchState.updated_at) >= new Date(cur.updated_at)) {
-                watchStateRef.current = data.watchState;
-                return data.watchState;
-              }
-              return cur;
+
+          // Merge participants
+          if (Array.isArray(data.participants)) {
+            setParticipants((prev) => {
+              const map = new Map<string, Participant>();
+              prev.forEach((p) => map.set(p.user_id, p));
+              data.participants.forEach((p: Participant) => {
+                if (!map.has(p.user_id)) {
+                  map.set(p.user_id, p);
+                }
+              });
+              return Array.from(map.values());
             });
           }
+
+          // Apply host's current watch state
+          if (data.watchState) {
+            setWatchState(data.watchState);
+            watchStateRef.current = data.watchState;
+          }
+
           if (data.queue && Array.isArray(data.queue)) {
             setQueue(data.queue);
           }
@@ -371,7 +371,7 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
 
             await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
 
-            // Process any queued candidates
+            // Flush any early received ICE candidates
             const queued = pendingCandidatesRef.current.get(data.senderId) || [];
             for (const cand of queued) {
               await pc.addIceCandidate(new RTCIceCandidate(cand));
@@ -483,7 +483,7 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
         }
       }
     },
-    [showToast, triggerReactionAnimation, publishNetworkMessage, isHost]
+    [showToast, triggerReactionAnimation, publishNetworkMessage, sendWebRTCOfferTo]
   );
 
   // Update participant state (mic, cam, speaking, sharing)
@@ -848,22 +848,18 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
           }
         } catch {}
       };
-      eventSource.onerror = () => {
-        // SSE reconnects automatically
-      };
     } catch (e) {
       console.warn("SSE connection error:", e);
     }
 
-    // 3. Announce presence to room
-    const helloPayload = {
+    // 3. Announce presence to room immediately
+    publishNetworkMessage({
       type: "HELLO",
       senderId: user.userId,
       participant: myParticipant,
-    };
-    publishNetworkMessage(helloPayload);
+    });
 
-    // 4. Regular Heartbeat every 4s to maintain live presence across the internet
+    // 4. Regular Heartbeat every 3s to maintain live presence across the internet
     const heartbeatInterval = setInterval(() => {
       if (!isMounted) return;
 
@@ -872,23 +868,21 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
         senderId: user.userId,
         participant: {
           ...myParticipant,
-          is_mic_muted: myParticipant.is_mic_muted,
-          is_cam_muted: myParticipant.is_cam_muted,
           is_sharing: Boolean(localScreenStreamRef.current),
         },
       });
 
-      // Prune inactive participants (no heartbeat in >12s)
+      // Prune inactive participants (no heartbeat in >10s)
       setParticipants((prev) => {
-        const cutoff = Date.now() - 12000;
+        const cutoff = Date.now() - 10000;
         const active = prev.filter((p) => {
-          if (p.user_id === user.userId) return true; // keep self
+          if (p.user_id === user.userId) return true;
           const last = new Date(p.last_seen || 0).getTime();
           return last > cutoff;
         });
         return active;
       });
-    }, 4000);
+    }, 3000);
 
     setConnectionStatus("connected");
     setIsLoading(false);
@@ -914,7 +908,7 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
         } catch {}
       }
     };
-  }, [roomCode, initialRoomName, handleNetworkData, publishNetworkMessage]);
+  }, [roomCode]); // ONLY depends on roomCode! NEVER restarts on state change!
 
   return {
     currentUser,
