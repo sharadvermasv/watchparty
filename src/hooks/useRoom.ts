@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
+import { RealtimeChannel } from "@supabase/supabase-js";
 import {
   Room,
   Participant,
@@ -50,7 +51,7 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
   const [connectionStatus, setConnectionStatus] = useState<"connecting" | "connected" | "error">("connecting");
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Stable references for async and event callbacks
+  // Stable references for async callbacks and event listeners
   const currentUserRef = useRef<UserSession | null>(null);
   currentUserRef.current = currentUser;
 
@@ -70,6 +71,10 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
   const queueRef = useRef<QueueItem[]>(queue);
   queueRef.current = queue;
 
+  const myParticipantRef = useRef<Participant | null>(null);
+
+  // Networking channels
+  const supabaseChannelRef = useRef<RealtimeChannel | null>(null);
   const broadcastChannelRef = useRef<BroadcastChannel | null>(null);
 
   // WebRTC Native Peer Connections for Screen Sharing
@@ -84,7 +89,7 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
     }, 3500);
   }, []);
 
-  // Trigger floating reaction
+  // Trigger floating reaction animation
   const triggerReactionAnimation = useCallback((emoji: string, senderName: string) => {
     const newReaction: FloatingReaction = {
       id: "rx_" + Math.random().toString(36).substring(2, 9),
@@ -98,30 +103,26 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
     }, 2500);
   }, []);
 
-  // Universal publisher: sends via ntfy.sh SSE topic, BroadcastChannel, and Supabase
-  const publishNetworkMessage = useCallback(
-    (data: any) => {
-      const effectiveCode = roomCode.toUpperCase();
-      const topic = `wp_party_${effectiveCode.toLowerCase()}`;
+  // Universal publisher via Supabase Realtime Broadcast & local BroadcastChannel
+  const sendBroadcast = useCallback((event: string, payload: any) => {
+    // 1. Supabase Realtime Broadcast
+    if (supabaseChannelRef.current) {
+      supabaseChannelRef.current
+        .send({
+          type: "broadcast",
+          event,
+          payload,
+        })
+        .catch((err) => {
+          console.warn("Supabase Realtime broadcast send error:", err);
+        });
+    }
 
-      // 1. BroadcastChannel (local tabs on same machine)
-      try {
-        broadcastChannelRef.current?.postMessage(data);
-      } catch {}
-
-      // 2. HTTPS Pub/Sub Relay (cross-device across the internet)
-      try {
-        fetch(`https://ntfy.sh/${topic}`, {
-          method: "POST",
-          body: JSON.stringify(data),
-          headers: {
-            "Content-Type": "application/json",
-          },
-        }).catch(() => {});
-      } catch {}
-    },
-    [roomCode]
-  );
+    // 2. BroadcastChannel (for local tabs in the same browser)
+    try {
+      broadcastChannelRef.current?.postMessage({ event, payload });
+    } catch {}
+  }, []);
 
   // Send a WebRTC offer for screen sharing to a specific participant
   const sendWebRTCOfferTo = useCallback(
@@ -130,10 +131,11 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
       if (!user || targetUserId === user.userId) return;
 
       try {
-        // Close existing connection if any
         const existing = peerConnectionsRef.current.get(targetUserId);
         if (existing) {
-          try { existing.close(); } catch {}
+          try {
+            existing.close();
+          } catch {}
         }
 
         const pc = new RTCPeerConnection(ICE_SERVERS);
@@ -145,7 +147,7 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
 
         pc.onicecandidate = (e) => {
           if (e.candidate) {
-            publishNetworkMessage({
+            sendBroadcast("WEBRTC_SIGNAL", {
               type: "WEBRTC_ICE",
               targetId: targetUserId,
               senderId: user.userId,
@@ -157,7 +159,7 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
 
-        publishNetworkMessage({
+        sendBroadcast("WEBRTC_SIGNAL", {
           type: "WEBRTC_OFFER",
           targetId: targetUserId,
           senderId: user.userId,
@@ -167,7 +169,7 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
         console.warn("Error sending WebRTC offer to", targetUserId, err);
       }
     },
-    [publishNetworkMessage]
+    [sendBroadcast]
   );
 
   // Broadcast WebRTC MediaStream for Screen Sharing to all participants
@@ -177,18 +179,18 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
       const user = currentUserRef.current;
       if (!user) return;
 
-      publishNetworkMessage({
-        type: "SCREEN_SHARE_STARTED",
+      sendBroadcast("SCREEN_SHARE_STARTED", {
         senderId: user.userId,
       });
 
+      // Send WebRTC offer to every peer in the room
       participantsRef.current.forEach((p) => {
         if (p.user_id !== user.userId) {
           sendWebRTCOfferTo(p.user_id, stream);
         }
       });
     },
-    [publishNetworkMessage, sendWebRTCOfferTo]
+    [sendBroadcast, sendWebRTCOfferTo]
   );
 
   // Stop broadcasting screen stream
@@ -202,288 +204,84 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
     });
     peerConnectionsRef.current.clear();
 
-    publishNetworkMessage({
-      type: "SCREEN_SHARE_STOPPED",
-    });
-  }, [publishNetworkMessage]);
+    sendBroadcast("SCREEN_SHARE_STOPPED", {});
+  }, [sendBroadcast]);
 
-  // Handle incoming network data payload (stable callback with zero churn)
-  const handleNetworkData = useCallback(
-    async (data: any) => {
-      if (!data || !data.type) return;
+  // Handle incoming WebRTC signaling
+  const handleWebRTCSignal = useCallback(
+    async (signal: any) => {
       const myId = currentUserRef.current?.userId;
+      if (!signal || !myId || signal.targetId !== myId) return;
 
-      // Ignore messages sent by self
-      if (data.senderId && data.senderId === myId) return;
+      try {
+        if (signal.type === "WEBRTC_OFFER") {
+          const pc = new RTCPeerConnection(ICE_SERVERS);
+          peerConnectionsRef.current.set(signal.senderId, pc);
 
-      switch (data.type) {
-        case "HELLO":
-        case "HEARTBEAT": {
-          const incomingP: Participant = data.participant;
-          if (!incomingP || incomingP.user_id === myId) break;
-
-          setParticipants((prev) => {
-            const now = new Date().toISOString();
-            const exists = prev.find((p) => p.user_id === incomingP.user_id);
-
-            let updated: Participant[];
-            if (exists) {
-              updated = prev.map((p) =>
-                p.user_id === incomingP.user_id
-                  ? { ...p, ...incomingP, last_seen: now }
-                  : p
-              );
-            } else {
-              showToast(`${incomingP.display_name} joined the room`);
-              updated = [...prev, { ...incomingP, last_seen: now }];
+          pc.ontrack = (event) => {
+            if (event.streams && event.streams[0]) {
+              setRemoteScreenStream(event.streams[0]);
+              setWatchState((prev) => ({
+                ...prev,
+                mode: "screen",
+                media_url: null,
+              }));
             }
+          };
 
-            // Universal Host: Earliest joined participant is host
-            const sortedByJoin = [...updated].sort(
-              (a, b) => new Date(a.joined_at).getTime() - new Date(b.joined_at).getTime()
-            );
-
-            if (sortedByJoin.length > 0) {
-              const canonicalHost = sortedByJoin[0];
-              setRoom((cur) =>
-                cur && cur.host_id !== canonicalHost.user_id
-                  ? { ...cur, host_id: canonicalHost.user_id }
-                  : cur
-              );
-            }
-
-            return updated;
-          });
-
-          // If a new peer says HELLO and we are host, reply with full room state & participants
-          if (data.type === "HELLO" && isHostRef.current) {
-            publishNetworkMessage({
-              type: "WELCOME",
-              watchState: watchStateRef.current,
-              queue: queueRef.current,
-              participants: participantsRef.current,
-              hostId: currentUserRef.current?.userId,
-            });
-
-            // If we are sharing screen, connect to the new peer immediately
-            if (localScreenStreamRef.current) {
-              sendWebRTCOfferTo(incomingP.user_id, localScreenStreamRef.current);
-            }
-          }
-          break;
-        }
-
-        case "WELCOME": {
-          if (data.hostId) {
-            setRoom((cur) => (cur ? { ...cur, host_id: data.hostId } : cur));
-          }
-
-          // Merge participants
-          if (Array.isArray(data.participants)) {
-            setParticipants((prev) => {
-              const map = new Map<string, Participant>();
-              prev.forEach((p) => map.set(p.user_id, p));
-              data.participants.forEach((p: Participant) => {
-                if (!map.has(p.user_id)) {
-                  map.set(p.user_id, p);
-                }
+          pc.onicecandidate = (e) => {
+            if (e.candidate) {
+              sendBroadcast("WEBRTC_SIGNAL", {
+                type: "WEBRTC_ICE",
+                targetId: signal.senderId,
+                senderId: myId,
+                candidate: e.candidate.toJSON(),
               });
-              return Array.from(map.values());
-            });
+            }
+          };
+
+          await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+
+          const queued = pendingCandidatesRef.current.get(signal.senderId) || [];
+          for (const cand of queued) {
+            await pc.addIceCandidate(new RTCIceCandidate(cand));
           }
+          pendingCandidatesRef.current.delete(signal.senderId);
 
-          // Apply host's current watch state
-          if (data.watchState) {
-            setWatchState(data.watchState);
-            watchStateRef.current = data.watchState;
-          }
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
 
-          if (data.queue && Array.isArray(data.queue)) {
-            setQueue(data.queue);
-          }
-          break;
-        }
-
-        case "PARTICIPANT_UPDATE": {
-          if (data.userId === myId) break;
-          setParticipants((prev) =>
-            prev.map((p) =>
-              p.user_id === data.userId
-                ? { ...p, ...data.updates, last_seen: new Date().toISOString() }
-                : p
-            )
-          );
-          break;
-        }
-
-        case "WATCH_STATE_UPDATE": {
-          setWatchState(data.watchState);
-          watchStateRef.current = data.watchState;
-          break;
-        }
-
-        case "SCREEN_SHARE_STARTED": {
-          setWatchState((prev) => ({
-            ...prev,
-            mode: "screen",
-            media_url: null,
-          }));
-          break;
-        }
-
-        case "SCREEN_SHARE_STOPPED": {
-          setRemoteScreenStream(null);
-          setWatchState((prev) => ({
-            ...prev,
-            mode: "idle",
-          }));
-          break;
-        }
-
-        case "WEBRTC_OFFER": {
-          if (data.targetId !== myId) return;
-
-          try {
-            const pc = new RTCPeerConnection(ICE_SERVERS);
-            peerConnectionsRef.current.set(data.senderId, pc);
-
-            pc.ontrack = (event) => {
-              if (event.streams && event.streams[0]) {
-                setRemoteScreenStream(event.streams[0]);
-                setWatchState((prev) => ({
-                  ...prev,
-                  mode: "screen",
-                  media_url: null,
-                }));
-              }
-            };
-
-            pc.onicecandidate = (e) => {
-              if (e.candidate) {
-                publishNetworkMessage({
-                  type: "WEBRTC_ICE",
-                  targetId: data.senderId,
-                  senderId: myId,
-                  candidate: e.candidate.toJSON(),
-                });
-              }
-            };
-
-            await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
-
-            // Flush any early received ICE candidates
-            const queued = pendingCandidatesRef.current.get(data.senderId) || [];
+          sendBroadcast("WEBRTC_SIGNAL", {
+            type: "WEBRTC_ANSWER",
+            targetId: signal.senderId,
+            senderId: myId,
+            sdp: answer,
+          });
+        } else if (signal.type === "WEBRTC_ANSWER") {
+          const pc = peerConnectionsRef.current.get(signal.senderId);
+          if (pc) {
+            await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+            const queued = pendingCandidatesRef.current.get(signal.senderId) || [];
             for (const cand of queued) {
               await pc.addIceCandidate(new RTCIceCandidate(cand));
             }
-            pendingCandidatesRef.current.delete(data.senderId);
-
-            const answer = await pc.createAnswer();
-            await pc.setLocalDescription(answer);
-
-            publishNetworkMessage({
-              type: "WEBRTC_ANSWER",
-              targetId: data.senderId,
-              senderId: myId,
-              sdp: answer,
-            });
-          } catch (err) {
-            console.warn("WebRTC offer handling error:", err);
+            pendingCandidatesRef.current.delete(signal.senderId);
           }
-          break;
-        }
-
-        case "WEBRTC_ANSWER": {
-          if (data.targetId !== myId) return;
-
-          const pc = peerConnectionsRef.current.get(data.senderId);
-          if (pc) {
-            try {
-              await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
-
-              const queued = pendingCandidatesRef.current.get(data.senderId) || [];
-              for (const cand of queued) {
-                await pc.addIceCandidate(new RTCIceCandidate(cand));
-              }
-              pendingCandidatesRef.current.delete(data.senderId);
-            } catch (err) {
-              console.warn("WebRTC answer handling error:", err);
-            }
-          }
-          break;
-        }
-
-        case "WEBRTC_ICE": {
-          if (data.targetId !== myId) return;
-
-          const pc = peerConnectionsRef.current.get(data.senderId);
+        } else if (signal.type === "WEBRTC_ICE") {
+          const pc = peerConnectionsRef.current.get(signal.senderId);
           if (pc && pc.remoteDescription && pc.remoteDescription.type) {
-            try {
-              await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
-            } catch (err) {
-              console.warn("Add ICE candidate error:", err);
-            }
+            await pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
           } else {
-            const list = pendingCandidatesRef.current.get(data.senderId) || [];
-            list.push(data.candidate);
-            pendingCandidatesRef.current.set(data.senderId, list);
+            const list = pendingCandidatesRef.current.get(signal.senderId) || [];
+            list.push(signal.candidate);
+            pendingCandidatesRef.current.set(signal.senderId, list);
           }
-          break;
         }
-
-        case "QUEUE_ADD": {
-          setQueue((prev) => {
-            if (prev.some((i) => i.id === data.item.id)) return prev;
-            return [...prev, data.item];
-          });
-          break;
-        }
-
-        case "QUEUE_REMOVE": {
-          setQueue((prev) => prev.filter((i) => i.id !== data.itemId));
-          break;
-        }
-
-        case "NEW_MESSAGE": {
-          setMessages((prev) => [...prev, data.message]);
-          break;
-        }
-
-        case "REACTION": {
-          triggerReactionAnimation(data.emoji, data.senderName);
-          break;
-        }
-
-        case "HOST_TRANSFER": {
-          setRoom((prev) => (prev ? { ...prev, host_id: data.newHostId } : null));
-          break;
-        }
-
-        case "GOODBYE": {
-          if (data.userId === myId) break;
-          setParticipants((prev) => {
-            const departing = prev.find((p) => p.user_id === data.userId);
-            if (departing) {
-              showToast(`${departing.display_name} left the room`);
-            }
-            const remaining = prev.filter((p) => p.user_id !== data.userId);
-
-            setRoom((currentRoom) => {
-              if (currentRoom && currentRoom.host_id === data.userId && remaining.length > 0) {
-                const newHost = remaining[0];
-                showToast(`${newHost.display_name} is now the host`);
-                return { ...currentRoom, host_id: newHost.user_id };
-              }
-              return currentRoom;
-            });
-
-            return remaining;
-          });
-          break;
-        }
+      } catch (err) {
+        console.warn("WebRTC signaling error:", err);
       }
     },
-    [showToast, triggerReactionAnimation, publishNetworkMessage, sendWebRTCOfferTo]
+    [sendBroadcast]
   );
 
   // Update participant state (mic, cam, speaking, sharing)
@@ -493,14 +291,37 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
       const currentRoom = roomRef.current;
       if (!user || !currentRoom) return;
 
+      const updatedParticipant: Participant = {
+        ...(myParticipantRef.current || {
+          id: "part_" + user.userId,
+          room_id: currentRoom.id,
+          user_id: user.userId,
+          display_name: user.displayName,
+          avatar: user.avatar,
+          is_speaking: false,
+          is_mic_muted: true,
+          is_cam_muted: true,
+          is_sharing: false,
+          joined_at: new Date().toISOString(),
+          last_seen: new Date().toISOString(),
+        }),
+        ...updates,
+        last_seen: new Date().toISOString(),
+      };
+      myParticipantRef.current = updatedParticipant;
+
       setParticipants((prev) =>
-        prev.map((p) => (p.user_id === user.userId ? { ...p, ...updates, last_seen: new Date().toISOString() } : p))
+        prev.map((p) => (p.user_id === user.userId ? updatedParticipant : p))
       );
 
-      publishNetworkMessage({
-        type: "PARTICIPANT_UPDATE",
+      // Track in Supabase Realtime Presence
+      if (supabaseChannelRef.current) {
+        supabaseChannelRef.current.track(updatedParticipant).catch(() => {});
+      }
+
+      // Also broadcast for instant UI response
+      sendBroadcast("PARTICIPANT_UPDATE", {
         userId: user.userId,
-        senderId: user.userId,
         updates,
       });
 
@@ -516,7 +337,7 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
         }
       }
     },
-    [publishNetworkMessage]
+    [sendBroadcast]
   );
 
   // Host update watch state
@@ -535,9 +356,7 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
           updated_by: user.userId,
         };
 
-        publishNetworkMessage({
-          type: "WATCH_STATE_UPDATE",
-          senderId: user.userId,
+        sendBroadcast("WATCH_STATE_UPDATE", {
           watchState: nextState,
         });
 
@@ -558,7 +377,7 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
         return nextState;
       });
     },
-    [publishNetworkMessage]
+    [sendBroadcast]
   );
 
   // Add to Queue
@@ -583,9 +402,7 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
           created_at: new Date().toISOString(),
         };
 
-        publishNetworkMessage({
-          type: "QUEUE_ADD",
-          senderId: user.userId,
+        sendBroadcast("QUEUE_ADD", {
           item: newItem,
         });
 
@@ -604,20 +421,17 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
         return [...prev, newItem];
       });
     },
-    [publishNetworkMessage]
+    [sendBroadcast]
   );
 
   // Remove from Queue
   const removeFromQueue = useCallback(
     (itemId: string) => {
       const currentRoom = roomRef.current;
-      const user = currentUserRef.current;
       setQueue((prev) => {
         const updated = prev.filter((i) => i.id !== itemId);
         if (currentRoom) {
-          publishNetworkMessage({
-            type: "QUEUE_REMOVE",
-            senderId: user?.userId,
+          sendBroadcast("QUEUE_REMOVE", {
             itemId,
           });
 
@@ -635,7 +449,7 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
         return updated;
       });
     },
-    [publishNetworkMessage]
+    [sendBroadcast]
   );
 
   // Play Queue Item (Host only)
@@ -672,9 +486,7 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
 
       setMessages((prev) => [...prev, newMsg]);
 
-      publishNetworkMessage({
-        type: "NEW_MESSAGE",
-        senderId: user.userId,
+      sendBroadcast("NEW_MESSAGE", {
         message: newMsg,
       });
 
@@ -685,43 +497,28 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
         }
       }
     },
-    [publishNetworkMessage]
+    [sendBroadcast]
   );
 
   // Send Floating Reaction
   const sendReaction = useCallback(
     (emoji: string) => {
       const user = currentUserRef.current;
-      const currentRoom = roomRef.current;
       if (!user) return;
       triggerReactionAnimation(emoji, user.displayName);
 
-      publishNetworkMessage({
-        type: "REACTION",
-        senderId: user.userId,
+      sendBroadcast("REACTION", {
         emoji,
         senderName: user.displayName,
       });
-
-      if (isSupabaseConfigured) {
-        const supabase = getSupabaseClient();
-        if (supabase && currentRoom) {
-          supabase.channel(`room_${currentRoom.id}`).send({
-            type: "broadcast",
-            event: "REACTION",
-            payload: { emoji, senderName: user.displayName },
-          });
-        }
-      }
     },
-    [triggerReactionAnimation, publishNetworkMessage]
+    [triggerReactionAnimation, sendBroadcast]
   );
 
   // Transfer Host
   const transferHost = useCallback(
     (newHostUserId: string) => {
       const currentRoom = roomRef.current;
-      const user = currentUserRef.current;
       if (!currentRoom) return;
 
       setParticipants((prev) => {
@@ -734,9 +531,7 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
 
       setRoom((prev) => (prev ? { ...prev, host_id: newHostUserId } : null));
 
-      publishNetworkMessage({
-        type: "HOST_TRANSFER",
-        senderId: user?.userId,
+      sendBroadcast("HOST_TRANSFER", {
         newHostId: newHostUserId,
       });
 
@@ -747,17 +542,16 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
         }
       }
     },
-    [showToast, publishNetworkMessage]
+    [showToast, sendBroadcast]
   );
 
-  // Main Network Initialization (SSE Realtime Stream + BroadcastChannel)
+  // Main Network Initialization (Supabase Realtime WebSockets + local BroadcastChannel)
   useEffect(() => {
     const user = getUserSession();
     setCurrentUser(user);
     currentUserRef.current = user;
 
     const effectiveCode = roomCode.toUpperCase();
-    const topic = `wp_party_${effectiveCode.toLowerCase()}`;
 
     // Local BroadcastChannel for same machine tabs
     const channelName = `watchparty_room_${effectiveCode}`;
@@ -813,7 +607,7 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
       joined_at: new Date().toISOString(),
       last_seen: new Date().toISOString(),
     };
-
+    myParticipantRef.current = myParticipant;
     setParticipants([myParticipant]);
 
     // Restore saved watch state if present
@@ -830,85 +624,273 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
       }
     } catch {}
 
-    // 1. Listen to BroadcastChannel (local tabs)
+    // Handler for local BroadcastChannel messages
     bc.onmessage = (event) => {
-      handleNetworkData(event.data);
+      const { event: evt, payload } = event.data || {};
+      handleBroadcastEvent(evt, payload);
     };
 
-    // 2. Listen to Server-Sent Events (SSE) across the Internet
-    let eventSource: EventSource | null = null;
-    try {
-      eventSource = new EventSource(`https://ntfy.sh/${topic}/sse`);
-      eventSource.onmessage = (event) => {
-        try {
-          const parsed = JSON.parse(event.data);
-          if (parsed && parsed.message) {
-            const inner = typeof parsed.message === "string" ? JSON.parse(parsed.message) : parsed.message;
-            handleNetworkData(inner);
+    function handleBroadcastEvent(event: string, payload: any) {
+      if (!isMounted || !payload) return;
+      const myId = currentUserRef.current?.userId;
+
+      switch (event) {
+        case "WATCH_STATE_UPDATE": {
+          if (payload.watchState) {
+            setWatchState(payload.watchState);
+            watchStateRef.current = payload.watchState;
           }
-        } catch {}
-      };
-    } catch (e) {
-      console.warn("SSE connection error:", e);
+          break;
+        }
+
+        case "SYNC_STATE": {
+          if (payload.hostId) {
+            setRoom((cur) => (cur ? { ...cur, host_id: payload.hostId } : cur));
+          }
+          if (payload.watchState) {
+            setWatchState(payload.watchState);
+            watchStateRef.current = payload.watchState;
+          }
+          if (payload.queue && Array.isArray(payload.queue)) {
+            setQueue(payload.queue);
+          }
+          break;
+        }
+
+        case "REQUEST_SYNC": {
+          // If we are host and someone requests sync, reply with full state
+          if (isHostRef.current && payload.userId !== myId) {
+            sendBroadcast("SYNC_STATE", {
+              watchState: watchStateRef.current,
+              queue: queueRef.current,
+              hostId: currentUserRef.current?.userId,
+            });
+
+            // If we are sharing screen, also send offer to new user
+            if (localScreenStreamRef.current && payload.userId) {
+              sendWebRTCOfferTo(payload.userId, localScreenStreamRef.current);
+            }
+          }
+          break;
+        }
+
+        case "PARTICIPANT_UPDATE": {
+          if (payload.userId === myId) break;
+          setParticipants((prev) =>
+            prev.map((p) =>
+              p.user_id === payload.userId
+                ? { ...p, ...payload.updates, last_seen: new Date().toISOString() }
+                : p
+            )
+          );
+          break;
+        }
+
+        case "NEW_MESSAGE": {
+          if (payload.message) {
+            setMessages((prev) => {
+              if (prev.some((m) => m.id === payload.message.id)) return prev;
+              return [...prev, payload.message];
+            });
+          }
+          break;
+        }
+
+        case "REACTION": {
+          if (payload.emoji && payload.senderName) {
+            triggerReactionAnimation(payload.emoji, payload.senderName);
+          }
+          break;
+        }
+
+        case "QUEUE_ADD": {
+          if (payload.item) {
+            setQueue((prev) => {
+              if (prev.some((i) => i.id === payload.item.id)) return prev;
+              return [...prev, payload.item];
+            });
+          }
+          break;
+        }
+
+        case "QUEUE_REMOVE": {
+          if (payload.itemId) {
+            setQueue((prev) => prev.filter((i) => i.id !== payload.itemId));
+          }
+          break;
+        }
+
+        case "HOST_TRANSFER": {
+          if (payload.newHostId) {
+            setRoom((prev) => (prev ? { ...prev, host_id: payload.newHostId } : null));
+          }
+          break;
+        }
+
+        case "SCREEN_SHARE_STARTED": {
+          setWatchState((prev) => ({
+            ...prev,
+            mode: "screen",
+            media_url: null,
+          }));
+          break;
+        }
+
+        case "SCREEN_SHARE_STOPPED": {
+          setRemoteScreenStream(null);
+          setWatchState((prev) => ({
+            ...prev,
+            mode: "idle",
+          }));
+          break;
+        }
+
+        case "WEBRTC_SIGNAL": {
+          handleWebRTCSignal(payload);
+          break;
+        }
+      }
     }
 
-    // 3. Announce presence to room immediately
-    publishNetworkMessage({
-      type: "HELLO",
-      senderId: user.userId,
-      participant: myParticipant,
-    });
+    // Connect to Supabase Realtime Channel
+    let supabaseChannel: RealtimeChannel | null = null;
+    const supabase = getSupabaseClient();
 
-    // 4. Regular Heartbeat every 3s to maintain live presence across the internet
-    const heartbeatInterval = setInterval(() => {
-      if (!isMounted) return;
-
-      publishNetworkMessage({
-        type: "HEARTBEAT",
-        senderId: user.userId,
-        participant: {
-          ...myParticipant,
-          is_sharing: Boolean(localScreenStreamRef.current),
+    if (supabase) {
+      supabaseChannel = supabase.channel(`wp_room_${effectiveCode}`, {
+        config: {
+          presence: { key: user.userId },
+          broadcast: { self: false },
         },
       });
+      supabaseChannelRef.current = supabaseChannel;
 
-      // Prune inactive participants (no heartbeat in >10s)
-      setParticipants((prev) => {
-        const cutoff = Date.now() - 10000;
-        const active = prev.filter((p) => {
-          if (p.user_id === user.userId) return true;
-          const last = new Date(p.last_seen || 0).getTime();
-          return last > cutoff;
+      // 1. Presence Sync: Synchronize active participants list across all devices
+      supabaseChannel
+        .on("presence", { event: "sync" }, () => {
+          if (!isMounted) return;
+          const presenceState = supabaseChannel?.presenceState() || {};
+          const activeList: Participant[] = [];
+
+          Object.values(presenceState).forEach((records: any) => {
+            if (Array.isArray(records) && records.length > 0) {
+              const latest = records[records.length - 1];
+              activeList.push(latest);
+            }
+          });
+
+          // Ensure self is in the list
+          const hasSelf = activeList.some((p) => p.user_id === user.userId);
+          if (!hasSelf && myParticipantRef.current) {
+            activeList.push(myParticipantRef.current);
+          }
+
+          // Universal host election: participant with earliest joined_at is host
+          if (activeList.length > 0) {
+            const sortedByJoin = [...activeList].sort(
+              (a, b) => new Date(a.joined_at || 0).getTime() - new Date(b.joined_at || 0).getTime()
+            );
+            const canonicalHost = sortedByJoin[0];
+            setRoom((cur) =>
+              cur && cur.host_id !== canonicalHost.user_id
+                ? { ...cur, host_id: canonicalHost.user_id }
+                : cur
+            );
+          }
+
+          setParticipants(activeList);
+        })
+        .on("presence", { event: "join" }, ({ newPresences }) => {
+          if (!isMounted) return;
+          newPresences.forEach((p: any) => {
+            if (p.user_id !== user.userId) {
+              showToast(`${p.display_name || "A friend"} joined the room`);
+
+              // If we are host, automatically send our state to the newcomer
+              if (isHostRef.current) {
+                supabaseChannel?.send({
+                  type: "broadcast",
+                  event: "SYNC_STATE",
+                  payload: {
+                    watchState: watchStateRef.current,
+                    queue: queueRef.current,
+                    hostId: currentUserRef.current?.userId,
+                  },
+                });
+
+                // If sharing screen, send WebRTC offer to new participant
+                if (localScreenStreamRef.current && p.user_id) {
+                  sendWebRTCOfferTo(p.user_id, localScreenStreamRef.current);
+                }
+              }
+            }
+          });
+        })
+        .on("presence", { event: "leave" }, ({ leftPresences }) => {
+          if (!isMounted) return;
+          leftPresences.forEach((p: any) => {
+            if (p.user_id !== user.userId) {
+              showToast(`${p.display_name || "A friend"} left the room`);
+            }
+          });
         });
-        return active;
-      });
-    }, 3000);
 
-    setConnectionStatus("connected");
-    setIsLoading(false);
+      // 2. Broadcast listeners
+      const broadcastEvents = [
+        "WATCH_STATE_UPDATE",
+        "SYNC_STATE",
+        "REQUEST_SYNC",
+        "PARTICIPANT_UPDATE",
+        "NEW_MESSAGE",
+        "REACTION",
+        "QUEUE_ADD",
+        "QUEUE_REMOVE",
+        "HOST_TRANSFER",
+        "SCREEN_SHARE_STARTED",
+        "SCREEN_SHARE_STOPPED",
+        "WEBRTC_SIGNAL",
+      ];
 
-    const handleBeforeUnload = () => {
-      publishNetworkMessage({
-        type: "GOODBYE",
-        senderId: user.userId,
-        userId: user.userId,
+      broadcastEvents.forEach((evt) => {
+        supabaseChannel?.on("broadcast", { event: evt }, ({ payload }) => {
+          handleBroadcastEvent(evt, payload);
+        });
       });
-    };
-    window.addEventListener("beforeunload", handleBeforeUnload);
+
+      // Subscribe to channel and track presence
+      supabaseChannel.subscribe(async (status) => {
+        if (!isMounted) return;
+        if (status === "SUBSCRIBED") {
+          setConnectionStatus("connected");
+          setIsLoading(false);
+          await supabaseChannel?.track(myParticipant);
+
+          // Request state sync from any existing peers
+          supabaseChannel?.send({
+            type: "broadcast",
+            event: "REQUEST_SYNC",
+            payload: { userId: user.userId },
+          });
+        } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          setConnectionStatus("error");
+          setIsLoading(false);
+        }
+      });
+    } else {
+      // Fallback if Supabase not configured
+      setConnectionStatus("connected");
+      setIsLoading(false);
+    }
 
     return () => {
       isMounted = false;
-      clearInterval(heartbeatInterval);
-      handleBeforeUnload();
-      window.removeEventListener("beforeunload", handleBeforeUnload);
       bc.close();
-      if (eventSource) {
-        try {
-          eventSource.close();
-        } catch {}
+      if (supabaseChannel) {
+        supabaseChannel.untrack().catch(() => {});
+        supabase?.removeChannel(supabaseChannel).catch(() => {});
       }
     };
-  }, [roomCode]); // ONLY depends on roomCode! NEVER restarts on state change!
+  }, [roomCode]); // ONLY depends on roomCode
 
   return {
     currentUser,
