@@ -87,6 +87,47 @@ export function parseYouTubeVideoId(url: string): string | null {
   return null;
 }
 
+export type MediaType = "youtube" | "hls" | "direct_video" | "unknown";
+
+/**
+ * Detects whether a URL is YouTube, HLS (.m3u8), or direct video file (.mp4, .webm, etc.)
+ */
+export function detectMediaType(url: string): MediaType {
+  if (!url) return "unknown";
+  const trimmed = url.trim();
+
+  if (parseYouTubeVideoId(trimmed)) {
+    return "youtube";
+  }
+
+  const lower = trimmed.toLowerCase();
+
+  // Check for HLS .m3u8
+  if (lower.includes(".m3u8") || lower.includes("m3u8") || lower.includes("/hls/")) {
+    return "hls";
+  }
+
+  // Check for direct video formats
+  if (
+    lower.includes(".mp4") ||
+    lower.includes(".webm") ||
+    lower.includes(".ogv") ||
+    lower.includes(".ogg") ||
+    lower.includes(".mov") ||
+    lower.includes(".m4v") ||
+    lower.endsWith("/video")
+  ) {
+    return "direct_video";
+  }
+
+  // If starts with http:// or https:// and not recognized, treat as generic web direct stream
+  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+    return "direct_video";
+  }
+
+  return "unknown";
+}
+
 export function formatTime(seconds: number): string {
   if (isNaN(seconds) || seconds < 0) return "0:00";
   const totalSec = Math.floor(seconds);

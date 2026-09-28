@@ -3,7 +3,9 @@
 import { useState } from "react";
 import { WatchState, FloatingReaction, ChatMessage } from "@/types/room";
 import { YouTubePlayer } from "@/components/video/YouTubePlayer";
+import { WebVideoPlayer } from "@/components/video/WebVideoPlayer";
 import { ScreenShareViewer } from "@/components/video/ScreenShareViewer";
+import { detectMediaType } from "@/lib/sync/driftCalculator";
 import { Film, Monitor, Copy, Check, Sparkles, MessageSquare, X } from "lucide-react";
 
 interface RoomStageProps {
@@ -52,8 +54,8 @@ export function RoomStage({
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // Last 5 messages for floating overlay
   const recentMessages = messages.slice(-5);
+  const mediaType = detectMediaType(watchState.media_url || "");
 
   return (
     <div className="relative flex-1 w-full h-full bg-[#08090B] flex items-center justify-center overflow-hidden">
@@ -114,14 +116,23 @@ export function RoomStage({
         </div>
       )}
 
-      {/* Mode A: Watch Together */}
+      {/* Mode A: Watch Together (YouTube or Universal HLS/MP4 Web Video) */}
       {watchState.mode === "watch" && watchState.media_url ? (
-        <YouTubePlayer
-          watchState={watchState}
-          isHost={isHost}
-          onUpdateWatchState={onUpdateWatchState}
-          onVideoEnded={onVideoEnded}
-        />
+        mediaType === "youtube" ? (
+          <YouTubePlayer
+            watchState={watchState}
+            isHost={isHost}
+            onUpdateWatchState={onUpdateWatchState}
+            onVideoEnded={onVideoEnded}
+          />
+        ) : (
+          <WebVideoPlayer
+            watchState={watchState}
+            isHost={isHost}
+            onUpdateWatchState={onUpdateWatchState}
+            onVideoEnded={onVideoEnded}
+          />
+        )
       ) : watchState.mode === "screen" ? (
         /* Mode B: Screen Share */
         <ScreenShareViewer
@@ -168,7 +179,7 @@ export function RoomStage({
                 <Film className="w-5 h-5" />
               </div>
               <span className="text-xs font-bold text-white">Watch Together</span>
-              <span className="text-[11px] text-[#A7ABB5] mt-0.5">YouTube Sync</span>
+              <span className="text-[11px] text-[#A7ABB5] mt-0.5">YouTube, HLS & MP4</span>
             </button>
 
             <button

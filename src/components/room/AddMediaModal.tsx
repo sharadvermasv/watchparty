@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { X, Film, Plus, Play, Sparkles } from "lucide-react";
-import { parseYouTubeVideoId } from "@/lib/sync/driftCalculator";
+import { detectMediaType } from "@/lib/sync/driftCalculator";
 
 interface AddMediaModalProps {
   isOpen: boolean;
@@ -25,36 +25,50 @@ export function AddMediaModal({
 
   if (!isOpen) return null;
 
-  const videoId = parseYouTubeVideoId(url);
+  const mediaType = detectMediaType(url);
 
   const handleSubmitPlay = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!videoId) {
-      setError("Please paste a valid YouTube video URL or ID.");
+    if (mediaType === "unknown" || !url.trim()) {
+      setError("Please paste a valid video URL (YouTube, HLS .m3u8, or direct .mp4/.webm stream).");
       return;
     }
-    onPlayNow(url.trim(), title.trim() || undefined);
+    const resolvedTitle = title.trim() || (mediaType === "hls" ? "HLS Live Stream" : mediaType === "direct_video" ? "Web Video Stream" : "YouTube Video");
+    onPlayNow(url.trim(), resolvedTitle);
     setUrl("");
     setTitle("");
     onClose();
   };
 
   const handleQueue = () => {
-    if (!videoId) {
-      setError("Please paste a valid YouTube video URL or ID.");
+    if (mediaType === "unknown" || !url.trim()) {
+      setError("Please paste a valid video URL (YouTube, HLS .m3u8, or direct .mp4/.webm stream).");
       return;
     }
-    onAddToQueue(url.trim(), title.trim() || undefined);
+    const resolvedTitle = title.trim() || (mediaType === "hls" ? "HLS Live Stream" : mediaType === "direct_video" ? "Web Video Stream" : "YouTube Video");
+    onAddToQueue(url.trim(), resolvedTitle);
     setUrl("");
     setTitle("");
     onClose();
   };
 
-  // Sample curated videos for quick one-click testing
+  // Curated demo streams testing YouTube, HLS, and Direct MP4
   const sampleVideos = [
-    { title: "Big Buck Bunny (4K 60fps)", url: "https://www.youtube.com/watch?v=aqz-KE-bpKQ" },
-    { title: "Lofi Hip Hop Radio - Beats to relax/study to", url: "https://www.youtube.com/watch?v=jfKfPfyJRdk" },
-    { title: "Tears of Steel (Sci-Fi Open Movie)", url: "https://www.youtube.com/watch?v=R6MlUcmOul8" },
+    {
+      title: "Big Buck Bunny (YouTube Sync)",
+      url: "https://www.youtube.com/watch?v=aqz-KE-bpKQ",
+      badge: "YouTube",
+    },
+    {
+      title: "Tears of Steel (Open-Source HLS .m3u8 Stream)",
+      url: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+      badge: "HLS Stream",
+    },
+    {
+      title: "Sintel Open Movie (Direct 4K MP4 Video)",
+      url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4",
+      badge: "Direct MP4",
+    },
   ];
 
   return (
@@ -73,18 +87,18 @@ export function AddMediaModal({
           </div>
           <div>
             <h3 className="text-lg font-bold text-white">Watch Together</h3>
-            <p className="text-xs text-[#A7ABB5]">Paste a video link to synchronize playback for everyone</p>
+            <p className="text-xs text-[#A7ABB5]">Paste any YouTube link, HLS (.m3u8) feed, or direct video (.mp4) stream</p>
           </div>
         </div>
 
         <form onSubmit={handleSubmitPlay} className="space-y-4">
           <div>
             <label className="block text-xs font-semibold text-white/80 uppercase tracking-wider mb-1.5">
-              Video URL
+              Video or Stream URL
             </label>
             <input
               type="text"
-              placeholder="https://youtube.com/watch?v=..."
+              placeholder="https://... (YouTube, .m3u8, or .mp4)"
               value={url}
               onChange={(e) => {
                 setUrl(e.target.value);
@@ -102,7 +116,7 @@ export function AddMediaModal({
             </label>
             <input
               type="text"
-              placeholder="e.g. Inception Trailer"
+              placeholder="e.g. Movie / Episode Title"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               className="w-full bg-[#08090B] border border-white/10 focus:border-[#FF5733] rounded-xl px-4 py-2.5 text-sm text-white placeholder-white/30 focus:outline-none transition"
@@ -112,7 +126,7 @@ export function AddMediaModal({
           {/* Quick sample videos */}
           <div className="pt-1">
             <span className="text-[11px] font-medium text-white/50 flex items-center gap-1 mb-2">
-              <Sparkles className="w-3 h-3 text-[#FF5733]" /> Or try a quick demo video:
+              <Sparkles className="w-3 h-3 text-[#FF5733]" /> Try a demo format:
             </span>
             <div className="space-y-1.5">
               {sampleVideos.map((s, idx) => (
@@ -125,7 +139,12 @@ export function AddMediaModal({
                   }}
                   className="w-full text-left px-3 py-1.5 rounded-lg bg-[#111318] hover:bg-white/5 border border-white/5 text-xs text-[#A7ABB5] hover:text-white transition flex items-center justify-between"
                 >
-                  <span className="truncate">{s.title}</span>
+                  <div className="flex items-center gap-2 truncate mr-2">
+                    <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-white/10 text-white/70">
+                      {s.badge}
+                    </span>
+                    <span className="truncate">{s.title}</span>
+                  </div>
                   <span className="text-[10px] text-[#FF5733] shrink-0 font-medium">Use</span>
                 </button>
               ))}
