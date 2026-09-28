@@ -30,9 +30,20 @@ export function YouTubePlayer({ watchState, isHost, onUpdateWatchState }: YouTub
   const [showControls, setShowControls] = useState(true);
   const [hostWarning, setHostWarning] = useState<string | null>(null);
 
+  // Stable references
+  const watchStateRef = useRef(watchState);
+  watchStateRef.current = watchState;
+
+  const isHostRef = useRef(isHost);
+  isHostRef.current = isHost;
+
+  const onUpdateWatchStateRef = useRef(onUpdateWatchState);
+  onUpdateWatchStateRef.current = onUpdateWatchState;
+
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isSyncingRef = useRef(false);
   const videoId = parseYouTubeVideoId(watchState.media_url || "");
+  const currentVideoIdRef = useRef<string | null>(null);
 
   // Load YouTube IFrame API
   useEffect(() => {
@@ -51,14 +62,15 @@ export function YouTubePlayer({ watchState, isHost, onUpdateWatchState }: YouTub
 
     function initPlayer() {
       if (!videoId || playerRef.current) return;
+      currentVideoIdRef.current = videoId;
 
       playerRef.current = new window.YT.Player("yt-player-target", {
         height: "100%",
         width: "100%",
         videoId: videoId,
         playerVars: {
-          autoplay: watchState.is_playing ? 1 : 0,
-          controls: 0, // We render our own cinema controls
+          autoplay: watchStateRef.current.is_playing ? 1 : 0,
+          controls: 0,
           disablekb: 1,
           fs: 0,
           modestbranding: 1,
@@ -71,25 +83,24 @@ export function YouTubePlayer({ watchState, isHost, onUpdateWatchState }: YouTub
             setDuration(event.target.getDuration() || 0);
             event.target.setVolume(80);
 
-            // Initial seek to expected time
-            const expected = calculateExpectedTime(watchState);
+            const expected = calculateExpectedTime(watchStateRef.current);
             event.target.seekTo(expected, true);
-            if (watchState.is_playing) {
+            if (watchStateRef.current.is_playing) {
               event.target.playVideo();
             } else {
               event.target.pauseVideo();
             }
           },
           onStateChange: (event: any) => {
-            if (!isHost) return;
+            if (!isHostRef.current) return;
             // 1: PLAYING, 2: PAUSED
-            if (event.data === 1 && !watchState.is_playing) {
-              onUpdateWatchState({
+            if (event.data === 1 && !watchStateRef.current.is_playing) {
+              onUpdateWatchStateRef.current({
                 is_playing: true,
                 current_time: event.target.getCurrentTime(),
               });
-            } else if (event.data === 2 && watchState.is_playing) {
-              onUpdateWatchState({
+            } else if (event.data === 2 && watchStateRef.current.is_playing) {
+              onUpdateWatchStateRef.current({
                 is_playing: false,
                 current_time: event.target.getCurrentTime(),
               });
@@ -111,20 +122,18 @@ export function YouTubePlayer({ watchState, isHost, onUpdateWatchState }: YouTub
 
   // Load new video when videoId changes
   useEffect(() => {
-    if (isPlayerReady && playerRef.current && videoId) {
-      const currentLoaded = playerRef.current.getVideoData?.()?.video_id;
-      if (currentLoaded !== videoId) {
-        playerRef.current.loadVideoById(videoId, watchState.current_time || 0);
-        if (watchState.is_playing) {
-          playerRef.current.playVideo();
-        } else {
-          playerRef.current.pauseVideo();
-        }
+    if (isPlayerReady && playerRef.current && videoId && videoId !== currentVideoIdRef.current) {
+      currentVideoIdRef.current = videoId;
+      playerRef.current.loadVideoById(videoId, 0);
+      if (watchStateRef.current.is_playing) {
+        playerRef.current.playVideo();
+      } else {
+        playerRef.current.pauseVideo();
       }
     }
-  }, [videoId, isPlayerReady, watchState.current_time, watchState.is_playing]);
+  }, [videoId, isPlayerReady]);
 
-  // Time tracker loop
+  // Track playback time
   useEffect(() => {
     if (!isPlayerReady || !playerRef.current) return;
 
@@ -137,7 +146,7 @@ export function YouTubePlayer({ watchState, isHost, onUpdateWatchState }: YouTub
           setDuration(dur);
         }
       } catch {}
-    }, 400);
+    }, 500);
 
     return () => clearInterval(interval);
   }, [isPlayerReady, duration]);
@@ -153,7 +162,8 @@ export function YouTubePlayer({ watchState, isHost, onUpdateWatchState }: YouTub
       if (isSyncingRef.current) return;
 
       try {
-        const expected = calculateExpectedTime(watchState);
+        const state = watchStateRef.current;
+        const expected = calculateExpectedTime(state);
         const current = playerRef.current.getCurrentTime() || 0;
         const drift = getDrift(current, expected);
         const action = evaluateSyncAction(drift, expected);
@@ -172,35 +182,35 @@ export function YouTubePlayer({ watchState, isHost, onUpdateWatchState }: YouTub
           setTimeout(() => {
             isSyncingRef.current = false;
             setSyncStatus("synced");
-          }, 600);
+          }, 800);
         }
 
         // Match play / pause state
         const playerState = playerRef.current.getPlayerState?.();
-        if (watchState.is_playing && playerState !== 1 && playerState !== 3) {
+        if (state.is_playing && playerState !== 1 && playerState !== 3) {
           playerRef.current.playVideo();
-        } else if (!watchState.is_playing && playerState === 1) {
+        } else if (!state.is_playing && playerState === 1) {
           playerRef.current.pauseVideo();
         }
       } catch {}
-    }, 1500);
+    }, 2000);
 
     return () => clearInterval(interval);
-  }, [isHost, isPlayerReady, watchState]);
+  }, [isHost, isPlayerReady, watchState.media_url]);
 
   // Manual "Sync me" button
   const handleSyncMe = useCallback(() => {
     if (!playerRef.current) return;
-    const expected = calculateExpectedTime(watchState);
+    const expected = calculateExpectedTime(watchStateRef.current);
     playerRef.current.seekTo(expected, true);
-    if (watchState.is_playing) {
+    if (watchStateRef.current.is_playing) {
       playerRef.current.playVideo();
     } else {
       playerRef.current.pauseVideo();
     }
     playerRef.current.setPlaybackRate?.(1.0);
     setSyncStatus("synced");
-  }, [watchState]);
+  }, []);
 
   // Play / Pause toggle
   const handleTogglePlay = () => {
@@ -214,13 +224,13 @@ export function YouTubePlayer({ watchState, isHost, onUpdateWatchState }: YouTub
 
     if (watchState.is_playing) {
       playerRef.current.pauseVideo();
-      onUpdateWatchState({
+      onUpdateWatchStateRef.current({
         is_playing: false,
         current_time: playerRef.current.getCurrentTime(),
       });
     } else {
       playerRef.current.playVideo();
-      onUpdateWatchState({
+      onUpdateWatchStateRef.current({
         is_playing: true,
         current_time: playerRef.current.getCurrentTime(),
       });
@@ -239,7 +249,7 @@ export function YouTubePlayer({ watchState, isHost, onUpdateWatchState }: YouTub
     setCurrentTime(target);
     if (playerRef.current) {
       playerRef.current.seekTo(target, true);
-      onUpdateWatchState({
+      onUpdateWatchStateRef.current({
         current_time: target,
       });
     }
@@ -279,12 +289,11 @@ export function YouTubePlayer({ watchState, isHost, onUpdateWatchState }: YouTub
     }
   };
 
-  // Fade controls after inactivity
   const handleMouseMove = () => {
     setShowControls(true);
     if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
     controlsTimeoutRef.current = setTimeout(() => {
-      if (watchState.is_playing) {
+      if (watchStateRef.current.is_playing) {
         setShowControls(false);
       }
     }, 3200);
@@ -298,10 +307,8 @@ export function YouTubePlayer({ watchState, isHost, onUpdateWatchState }: YouTub
       onMouseMove={handleMouseMove}
       className="relative w-full h-full bg-black overflow-hidden group select-none flex items-center justify-center"
     >
-      {/* Target IFrame */}
       <div id="yt-player-target" className="w-full h-full pointer-events-none" />
 
-      {/* Host warning toast overlay */}
       {hostWarning && (
         <div className="absolute top-6 left-1/2 -translate-x-1/2 z-50 bg-[#151820]/95 border border-[#FF5733]/40 text-[#FF5733] px-4 py-2 rounded-full text-xs font-medium flex items-center gap-2 shadow-xl backdrop-blur-md animate-fade-in">
           <ShieldAlert className="w-4 h-4" />
@@ -326,7 +333,6 @@ export function YouTubePlayer({ watchState, isHost, onUpdateWatchState }: YouTub
             </h2>
           </div>
 
-          {/* Sync indicator */}
           <div className="flex items-center gap-2">
             {syncStatus === "synced" ? (
               <span className="flex items-center gap-1.5 text-xs text-emerald-400 bg-emerald-950/60 border border-emerald-500/30 px-2.5 py-1 rounded-full">
@@ -353,7 +359,6 @@ export function YouTubePlayer({ watchState, isHost, onUpdateWatchState }: YouTub
 
         {/* Bottom Cinema Control Strip */}
         <div className="absolute bottom-4 left-6 right-6 flex flex-col gap-2 pointer-events-auto">
-          {/* Progress bar with scrub track */}
           <div className="relative group/track flex items-center w-full h-3 cursor-pointer">
             <input
               type="range"
@@ -364,24 +369,20 @@ export function YouTubePlayer({ watchState, isHost, onUpdateWatchState }: YouTub
               onChange={handleSeekChange}
               className="absolute inset-0 w-full h-full opacity-0 z-20 cursor-pointer"
             />
-            {/* Background track */}
             <div className="w-full h-1.5 bg-white/20 rounded-full overflow-hidden transition-all group-hover/track:h-2">
               <div
                 className="h-full bg-[#FF5733] relative rounded-full"
                 style={{ width: `${progressPercent}%` }}
               />
             </div>
-            {/* Scrubber thumb */}
             <div
               className="absolute w-3.5 h-3.5 bg-white rounded-full shadow-md pointer-events-none transition-all scale-0 group-hover/track:scale-100"
               style={{ left: `calc(${progressPercent}% - 7px)` }}
             />
           </div>
 
-          {/* Controls row */}
           <div className="flex items-center justify-between pt-1">
             <div className="flex items-center gap-4">
-              {/* Play / Pause button */}
               <button
                 onClick={handleTogglePlay}
                 className="w-10 h-10 rounded-full flex items-center justify-center bg-white/10 hover:bg-[#FF5733] text-white transition cursor-pointer"
@@ -394,14 +395,12 @@ export function YouTubePlayer({ watchState, isHost, onUpdateWatchState }: YouTub
                 )}
               </button>
 
-              {/* Time display */}
               <div className="text-xs text-white/80 font-mono tracking-tight">
                 <span className="text-white font-medium">{formatTime(currentTime)}</span>
                 <span className="text-white/40 mx-1.5">/</span>
                 <span className="text-white/60">{formatTime(duration)}</span>
               </div>
 
-              {/* Volume Slider */}
               <div className="flex items-center gap-2 group/volume pl-2">
                 <button
                   onClick={handleToggleMute}

@@ -1,7 +1,7 @@
 "use client";
 
-import { use, useState, useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useState, useCallback } from "react";
+import { useParams } from "next/navigation";
 import { useRoom } from "@/hooks/useRoom";
 import { useJitsi } from "@/hooks/useJitsi";
 import { RoomHeader } from "@/components/room/RoomHeader";
@@ -13,7 +13,6 @@ import { AddMediaModal } from "@/components/room/AddMediaModal";
 
 export default function RoomPage() {
   const params = useParams();
-  const router = useRouter();
   const roomCode = ((params?.code as string) || "").toUpperCase();
 
   const [activeTab, setActiveTab] = useState<"chat" | "people" | "queue" | null>("chat");
@@ -41,6 +40,32 @@ export default function RoomPage() {
     transferHost,
   } = useRoom({ roomCode });
 
+  // Stable callbacks for Jitsi events
+  const handleParticipantSpeaking = useCallback(
+    (speaking: boolean) => {
+      updateMyParticipantStatus({ is_speaking: speaking });
+    },
+    [updateMyParticipantStatus]
+  );
+
+  const handleScreenShareStarted = useCallback(
+    () => {
+      updateMyParticipantStatus({ is_sharing: true });
+      updateWatchState({
+        mode: "screen",
+        media_url: null,
+      });
+    },
+    [updateMyParticipantStatus, updateWatchState]
+  );
+
+  const handleScreenShareStopped = useCallback(() => {
+    updateMyParticipantStatus({ is_sharing: false });
+    updateWatchState({
+      mode: "idle",
+    });
+  }, [updateMyParticipantStatus, updateWatchState]);
+
   // WebRTC & Audio-Video Hook
   const {
     isMicMuted,
@@ -55,32 +80,20 @@ export default function RoomPage() {
   } = useJitsi({
     roomCode,
     userName: currentUser?.displayName || "Guest",
-    onParticipantSpeaking: (speaking) => {
-      updateMyParticipantStatus({ is_speaking: speaking });
-    },
-    onScreenShareStarted: (stream) => {
-      updateMyParticipantStatus({ is_sharing: true });
-      updateWatchState({
-        mode: "screen",
-        media_url: null,
-      });
-    },
-    onScreenShareStopped: () => {
-      updateMyParticipantStatus({ is_sharing: false });
-      updateWatchState({
-        mode: "idle",
-      });
-    },
+    onParticipantSpeaking: handleParticipantSpeaking,
+    onScreenShareStarted: handleScreenShareStarted,
+    onScreenShareStopped: handleScreenShareStopped,
   });
 
-  // Keep participant mic/cam sync
-  useEffect(() => {
-    updateMyParticipantStatus({
-      is_mic_muted: isMicMuted,
-      is_cam_muted: isCamMuted,
-      is_sharing: isScreenSharing,
-    });
-  }, [isMicMuted, isCamMuted, isScreenSharing, updateMyParticipantStatus]);
+  const handleToggleMic = useCallback(() => {
+    toggleMic();
+    updateMyParticipantStatus({ is_mic_muted: !isMicMuted });
+  }, [toggleMic, isMicMuted, updateMyParticipantStatus]);
+
+  const handleToggleCam = useCallback(() => {
+    toggleCam();
+    updateMyParticipantStatus({ is_cam_muted: !isCamMuted });
+  }, [toggleCam, isCamMuted, updateMyParticipantStatus]);
 
   const handleToggleTab = (tab: "chat" | "people" | "queue") => {
     setActiveTab((cur) => (cur === tab ? null : tab));
@@ -161,8 +174,8 @@ export default function RoomPage() {
         isSpeaking={isSpeaking}
         activeTab={activeTab}
         queueCount={queue.length}
-        onToggleMic={toggleMic}
-        onToggleCam={toggleCam}
+        onToggleMic={handleToggleMic}
+        onToggleCam={handleToggleCam}
         onToggleScreenShare={isScreenSharing ? stopScreenShare : startScreenShare}
         onOpenAddMedia={() => setIsAddMediaOpen(true)}
         onToggleTab={handleToggleTab}

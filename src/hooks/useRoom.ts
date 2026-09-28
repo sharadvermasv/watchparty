@@ -40,7 +40,16 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
   const [connectionStatus, setConnectionStatus] = useState<"connecting" | "connected" | "error">("connecting");
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // BroadcastChannel for local/multi-tab fallback
+  // Stable refs to prevent callback recreate loops
+  const currentUserRef = useRef<UserSession | null>(null);
+  currentUserRef.current = currentUser;
+
+  const roomRef = useRef<Room | null>(null);
+  roomRef.current = room;
+
+  const watchStateRef = useRef<WatchState>(watchState);
+  watchStateRef.current = watchState;
+
   const broadcastChannelRef = useRef<BroadcastChannel | null>(null);
 
   const isHost = Boolean(room && currentUser && room.host_id === currentUser.userId);
@@ -58,7 +67,7 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
       id: "rx_" + Math.random().toString(36).substring(2, 9),
       emoji,
       senderName,
-      xPercent: 15 + Math.random() * 70, // Spread across center 70% of screen
+      xPercent: 15 + Math.random() * 70,
     };
     setFloatingReactions((prev) => [...prev.slice(-15), newReaction]);
     setTimeout(() => {
@@ -68,124 +77,135 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
 
   // Update participant state (mic, cam, speaking, sharing)
   const updateMyParticipantStatus = useCallback((updates: Partial<Participant>) => {
-    if (!currentUser || !room) return;
+    const user = currentUserRef.current;
+    const currentRoom = roomRef.current;
+    if (!user || !currentRoom) return;
 
     setParticipants((prev) =>
-      prev.map((p) => (p.user_id === currentUser.userId ? { ...p, ...updates, last_seen: new Date().toISOString() } : p))
+      prev.map((p) => (p.user_id === user.userId ? { ...p, ...updates, last_seen: new Date().toISOString() } : p))
     );
 
-    // Broadcast or update Supabase
     if (isSupabaseConfigured) {
       const supabase = getSupabaseClient();
       if (supabase) {
         supabase
           .from("participants")
           .update(updates)
-          .eq("room_id", room.id)
-          .eq("user_id", currentUser.userId)
+          .eq("room_id", currentRoom.id)
+          .eq("user_id", user.userId)
           .then();
       }
     } else if (broadcastChannelRef.current) {
       broadcastChannelRef.current.postMessage({
         type: "PARTICIPANT_UPDATE",
-        userId: currentUser.userId,
+        userId: user.userId,
         updates,
       });
     }
-  }, [currentUser, room]);
+  }, []);
 
   // Host update watch state
   const updateWatchState = useCallback((updates: Partial<WatchState>) => {
-    if (!room || !currentUser) return;
+    const currentRoom = roomRef.current;
+    const user = currentUserRef.current;
+    if (!currentRoom || !user) return;
 
-    const nextState: WatchState = {
-      ...watchState,
-      ...updates,
-      room_id: room.id,
-      updated_at: new Date().toISOString(),
-      updated_by: currentUser.userId,
-    };
+    setWatchState((prev) => {
+      const nextState: WatchState = {
+        ...prev,
+        ...updates,
+        room_id: currentRoom.id,
+        updated_at: new Date().toISOString(),
+        updated_by: user.userId,
+      };
 
-    setWatchState(nextState);
-
-    if (isSupabaseConfigured) {
-      const supabase = getSupabaseClient();
-      if (supabase) {
-        supabase
-          .from("watch_state")
-          .upsert(nextState)
-          .then();
+      if (isSupabaseConfigured) {
+        const supabase = getSupabaseClient();
+        if (supabase) {
+          supabase
+            .from("watch_state")
+            .upsert(nextState)
+            .then();
+        }
+      } else if (broadcastChannelRef.current) {
+        broadcastChannelRef.current.postMessage({
+          type: "WATCH_STATE_UPDATE",
+          watchState: nextState,
+        });
+        try {
+          localStorage.setItem(`wp_state_${currentRoom.room_code}`, JSON.stringify(nextState));
+        } catch {}
       }
-    } else if (broadcastChannelRef.current) {
-      broadcastChannelRef.current.postMessage({
-        type: "WATCH_STATE_UPDATE",
-        watchState: nextState,
-      });
-      // Store in localStorage for new tabs
-      try {
-        localStorage.setItem(`wp_state_${room.room_code}`, JSON.stringify(nextState));
-      } catch {}
-    }
-  }, [room, currentUser, watchState]);
+
+      return nextState;
+    });
+  }, []);
 
   // Add to Queue
   const addToQueue = useCallback((url: string, title?: string) => {
-    if (!room || !currentUser) return;
+    const currentRoom = roomRef.current;
+    const user = currentUserRef.current;
+    if (!currentRoom || !user) return;
     const videoId = parseYouTubeVideoId(url);
     const resolvedTitle = title || (videoId ? `YouTube Video (${videoId})` : "Video Link");
     const thumbnail = videoId ? `https://img.youtube.com/vi/${videoId}/hqdefault.jpg` : undefined;
 
-    const newItem: QueueItem = {
-      id: "q_" + Math.random().toString(36).substring(2, 9),
-      room_id: room.id,
-      media_url: url,
-      title: resolvedTitle,
-      thumbnail,
-      added_by: currentUser.displayName,
-      position: queue.length,
-      created_at: new Date().toISOString(),
-    };
+    setQueue((prev) => {
+      const newItem: QueueItem = {
+        id: "q_" + Math.random().toString(36).substring(2, 9),
+        room_id: currentRoom.id,
+        media_url: url,
+        title: resolvedTitle,
+        thumbnail,
+        added_by: user.displayName,
+        position: prev.length,
+        created_at: new Date().toISOString(),
+      };
 
-    setQueue((prev) => [...prev, newItem]);
-
-    if (isSupabaseConfigured) {
-      const supabase = getSupabaseClient();
-      if (supabase) {
-        supabase.from("queue").insert(newItem).then();
+      if (isSupabaseConfigured) {
+        const supabase = getSupabaseClient();
+        if (supabase) {
+          supabase.from("queue").insert(newItem).then();
+        }
+      } else if (broadcastChannelRef.current) {
+        broadcastChannelRef.current.postMessage({
+          type: "QUEUE_ADD",
+          item: newItem,
+        });
+        try {
+          const stored = JSON.parse(localStorage.getItem(`wp_queue_${currentRoom.room_code}`) || "[]");
+          localStorage.setItem(`wp_queue_${currentRoom.room_code}`, JSON.stringify([...stored, newItem]));
+        } catch {}
       }
-    } else if (broadcastChannelRef.current) {
-      broadcastChannelRef.current.postMessage({
-        type: "QUEUE_ADD",
-        item: newItem,
-      });
-      try {
-        const stored = JSON.parse(localStorage.getItem(`wp_queue_${room.room_code}`) || "[]");
-        localStorage.setItem(`wp_queue_${room.room_code}`, JSON.stringify([...stored, newItem]));
-      } catch {}
-    }
-  }, [room, currentUser, queue.length]);
+
+      return [...prev, newItem];
+    });
+  }, []);
 
   // Remove from Queue
   const removeFromQueue = useCallback((itemId: string) => {
-    if (!room) return;
-    setQueue((prev) => prev.filter((i) => i.id !== itemId));
-
-    if (isSupabaseConfigured) {
-      const supabase = getSupabaseClient();
-      if (supabase) {
-        supabase.from("queue").delete().eq("id", itemId).then();
+    const currentRoom = roomRef.current;
+    setQueue((prev) => {
+      const updated = prev.filter((i) => i.id !== itemId);
+      if (currentRoom) {
+        if (isSupabaseConfigured) {
+          const supabase = getSupabaseClient();
+          if (supabase) {
+            supabase.from("queue").delete().eq("id", itemId).then();
+          }
+        } else if (broadcastChannelRef.current) {
+          broadcastChannelRef.current.postMessage({
+            type: "QUEUE_REMOVE",
+            itemId,
+          });
+          try {
+            localStorage.setItem(`wp_queue_${currentRoom.room_code}`, JSON.stringify(updated));
+          } catch {}
+        }
       }
-    } else if (broadcastChannelRef.current) {
-      broadcastChannelRef.current.postMessage({
-        type: "QUEUE_REMOVE",
-        itemId,
-      });
-      try {
-        const stored = JSON.parse(localStorage.getItem(`wp_queue_${room.room_code}`) || "[]");
-        localStorage.setItem(`wp_queue_${room.room_code}`, JSON.stringify(stored.filter((i: QueueItem) => i.id !== itemId)));
-      } catch {}
-    }
-  }, [room]);
+      return updated;
+    });
+  }, []);
 
   // Play Queue Item (Host only)
   const playQueueItem = useCallback((item: QueueItem) => {
@@ -201,14 +221,16 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
 
   // Send Chat message
   const sendMessage = useCallback((text: string) => {
-    if (!room || !currentUser || !text.trim()) return;
+    const currentRoom = roomRef.current;
+    const user = currentUserRef.current;
+    if (!currentRoom || !user || !text.trim()) return;
 
     const newMsg: ChatMessage = {
       id: "msg_" + Math.random().toString(36).substring(2, 9),
-      room_id: room.id,
-      participant_name: currentUser.displayName,
-      participant_id: currentUser.userId,
-      avatar: currentUser.avatar,
+      room_id: currentRoom.id,
+      participant_name: user.displayName,
+      participant_id: user.userId,
+      avatar: user.avatar,
       message: text.trim(),
       created_at: new Date().toISOString(),
     };
@@ -226,44 +248,51 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
         message: newMsg,
       });
     }
-  }, [room, currentUser]);
+  }, []);
 
   // Send Floating Reaction
   const sendReaction = useCallback((emoji: string) => {
-    if (!currentUser) return;
-    triggerReactionAnimation(emoji, currentUser.displayName);
+    const user = currentUserRef.current;
+    const currentRoom = roomRef.current;
+    if (!user) return;
+    triggerReactionAnimation(emoji, user.displayName);
 
     if (isSupabaseConfigured) {
       const supabase = getSupabaseClient();
-      if (supabase && room) {
-        supabase.channel(`room_${room.id}`).send({
+      if (supabase && currentRoom) {
+        supabase.channel(`room_${currentRoom.id}`).send({
           type: "broadcast",
           event: "REACTION",
-          payload: { emoji, senderName: currentUser.displayName },
+          payload: { emoji, senderName: user.displayName },
         });
       }
     } else if (broadcastChannelRef.current) {
       broadcastChannelRef.current.postMessage({
         type: "REACTION",
         emoji,
-        senderName: currentUser.displayName,
+        senderName: user.displayName,
       });
     }
-  }, [currentUser, room, triggerReactionAnimation]);
+  }, [triggerReactionAnimation]);
 
   // Transfer Host
   const transferHost = useCallback((newHostUserId: string) => {
-    if (!room) return;
-    const target = participants.find((p) => p.user_id === newHostUserId);
+    const currentRoom = roomRef.current;
+    if (!currentRoom) return;
+    setParticipants((prev) => {
+      const target = prev.find((p) => p.user_id === newHostUserId);
+      if (target) {
+        showToast(`${target.display_name} is now the host`);
+      }
+      return prev;
+    });
+
     setRoom((prev) => (prev ? { ...prev, host_id: newHostUserId } : null));
-    if (target) {
-      showToast(`${target.display_name} is now the host`);
-    }
 
     if (isSupabaseConfigured) {
       const supabase = getSupabaseClient();
       if (supabase) {
-        supabase.from("rooms").update({ host_id: newHostUserId }).eq("id", room.id).then();
+        supabase.from("rooms").update({ host_id: newHostUserId }).eq("id", currentRoom.id).then();
       }
     } else if (broadcastChannelRef.current) {
       broadcastChannelRef.current.postMessage({
@@ -271,12 +300,13 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
         newHostId: newHostUserId,
       });
     }
-  }, [room, participants, showToast]);
+  }, [showToast]);
 
-  // Main Initialization Effect
+  // Main Initialization Effect (runs ONLY on roomCode change)
   useEffect(() => {
     const user = getUserSession();
     setCurrentUser(user);
+    currentUserRef.current = user;
 
     const effectiveCode = roomCode.toUpperCase();
     const channelName = `watchparty_room_${effectiveCode}`;
@@ -297,7 +327,7 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
           id: "rm_" + effectiveCode,
           room_code: effectiveCode,
           name: initialRoomName || `Watch Room ${effectiveCode}`,
-          host_id: user.userId, // First creator is host
+          host_id: user.userId,
           is_private: true,
           created_at: new Date().toISOString(),
         };
@@ -316,6 +346,7 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
 
     if (isMounted) {
       setRoom(loadedRoom);
+      roomRef.current = loadedRoom;
     }
 
     const myParticipant: Participant = {
@@ -338,7 +369,9 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
     try {
       const savedState = localStorage.getItem(`wp_state_${effectiveCode}`);
       if (savedState) {
-        setWatchState(JSON.parse(savedState));
+        const parsed = JSON.parse(savedState);
+        setWatchState(parsed);
+        watchStateRef.current = parsed;
       }
       const savedQueue = localStorage.getItem(`wp_queue_${effectiveCode}`);
       if (savedQueue) {
@@ -353,21 +386,19 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
 
       switch (data.type) {
         case "HELLO": {
-          // A new participant announced themselves
           const newP: Participant = data.participant;
+          if (!newP) break;
           setParticipants((prev) => {
             const exists = prev.find((p) => p.user_id === newP.user_id);
             if (exists) return prev;
             showToast(`${newP.display_name} joined the room`);
             return [...prev, newP];
           });
-          // Reply with current presence, room and watch state so new peer gets current state
           bc.postMessage({
             type: "WELCOME",
             participant: myParticipant,
             room: loadedRoom,
-            watchState,
-            queue,
+            watchState: watchStateRef.current,
           });
           break;
         }
@@ -382,13 +413,11 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
           if (data.watchState && data.watchState.updated_at) {
             setWatchState((cur) => {
               if (new Date(data.watchState.updated_at) > new Date(cur.updated_at)) {
+                watchStateRef.current = data.watchState;
                 return data.watchState;
               }
               return cur;
             });
-          }
-          if (data.queue && Array.isArray(data.queue)) {
-            setQueue(data.queue);
           }
           break;
         }
@@ -402,6 +431,7 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
 
         case "WATCH_STATE_UPDATE": {
           setWatchState(data.watchState);
+          watchStateRef.current = data.watchState;
           break;
         }
 
@@ -441,7 +471,6 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
             }
             const remaining = prev.filter((p) => p.user_id !== data.userId);
 
-            // If the departing participant was host, auto-transfer to remaining oldest participant!
             setRoom((currentRoom) => {
               if (currentRoom && currentRoom.host_id === data.userId && remaining.length > 0) {
                 const newHost = remaining[0];
@@ -467,7 +496,6 @@ export function useRoom({ roomCode, initialRoomName }: UseRoomProps) {
     setConnectionStatus("connected");
     setIsLoading(false);
 
-    // Heartbeat & cleanup
     const handleBeforeUnload = () => {
       bc.postMessage({
         type: "GOODBYE",

@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { Participant } from "@/types/room";
 
 interface UseJitsiProps {
   roomCode: string;
@@ -25,10 +24,40 @@ export function useJitsi({
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
 
+  // Keep callback refs stable to prevent effect re-trigger loops
+  const onSpeakingRef = useRef(onParticipantSpeaking);
+  onSpeakingRef.current = onParticipantSpeaking;
+
+  const onScreenShareStartedRef = useRef(onScreenShareStarted);
+  onScreenShareStartedRef.current = onScreenShareStarted;
+
+  const onScreenShareStoppedRef = useRef(onScreenShareStopped);
+  onScreenShareStoppedRef.current = onScreenShareStopped;
+
+  const isSpeakingStateRef = useRef(false);
   const jitsiApiRef = useRef<any>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const audioIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Stop Audio Meter
+  const stopAudioMeter = useCallback(() => {
+    if (audioIntervalRef.current) {
+      clearInterval(audioIntervalRef.current);
+      audioIntervalRef.current = null;
+    }
+    if (audioContextRef.current) {
+      try {
+        audioContextRef.current.close();
+      } catch {}
+      audioContextRef.current = null;
+    }
+    if (isSpeakingStateRef.current) {
+      isSpeakingStateRef.current = false;
+      setIsSpeaking(false);
+      onSpeakingRef.current?.(false);
+    }
+  }, []);
 
   // Initialize native microphone audio level analysis for speaking indicator
   const startAudioMeter = useCallback((stream: MediaStream) => {
@@ -55,48 +84,40 @@ export function useJitsi({
           sum += dataArray[i];
         }
         const avg = sum / dataArray.length;
-        const speaking = avg > 18; // threshold for voice
-        setIsSpeaking(speaking);
-        onParticipantSpeaking?.(speaking);
-      }, 200);
-    } catch (e) {
-      console.warn("Audio meter init error:", e);
-    }
-  }, [onParticipantSpeaking]);
+        const speaking = avg > 20;
 
-  const stopAudioMeter = useCallback(() => {
-    if (audioIntervalRef.current) {
-      clearInterval(audioIntervalRef.current);
-      audioIntervalRef.current = null;
+        if (speaking !== isSpeakingStateRef.current) {
+          isSpeakingStateRef.current = speaking;
+          setIsSpeaking(speaking);
+          onSpeakingRef.current?.(speaking);
+        }
+      }, 250);
+    } catch (e) {
+      console.warn("Audio meter init note:", e);
     }
-    if (audioContextRef.current) {
-      try {
-        audioContextRef.current.close();
-      } catch {}
-      audioContextRef.current = null;
-    }
-    setIsSpeaking(false);
-    onParticipantSpeaking?.(false);
-  }, [onParticipantSpeaking]);
+  }, []);
 
   // Toggle Microphone
   const toggleMic = useCallback(async () => {
     if (isMicMuted) {
       // Unmute: request user media if needed
       try {
-        if (!localStream) {
-          const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: !isCamMuted });
+        let stream = localStream;
+        if (!stream) {
+          stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: !isCamMuted });
           setLocalStream(stream);
           startAudioMeter(stream);
         } else {
-          localStream.getAudioTracks().forEach((track) => {
+          stream.getAudioTracks().forEach((track) => {
             track.enabled = true;
           });
-          startAudioMeter(localStream);
+          startAudioMeter(stream);
         }
         setIsMicMuted(false);
         if (jitsiApiRef.current) {
-          jitsiApiRef.current.executeCommand("toggleAudio");
+          try {
+            jitsiApiRef.current.executeCommand("toggleAudio");
+          } catch {}
         }
       } catch (err) {
         console.warn("Could not access microphone:", err);
@@ -111,7 +132,9 @@ export function useJitsi({
       stopAudioMeter();
       setIsMicMuted(true);
       if (jitsiApiRef.current) {
-        jitsiApiRef.current.executeCommand("toggleAudio");
+        try {
+          jitsiApiRef.current.executeCommand("toggleAudio");
+        } catch {}
       }
     }
   }, [isMicMuted, isCamMuted, localStream, startAudioMeter, stopAudioMeter]);
@@ -126,7 +149,6 @@ export function useJitsi({
           stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: !isMicMuted });
           setLocalStream(stream);
         } else {
-          // If stream only had audio, add video track
           if (stream.getVideoTracks().length === 0) {
             const videoStream = await navigator.mediaDevices.getUserMedia({ video: true });
             const videoTrack = videoStream.getVideoTracks()[0];
@@ -139,7 +161,9 @@ export function useJitsi({
         }
         setIsCamMuted(false);
         if (jitsiApiRef.current) {
-          jitsiApiRef.current.executeCommand("toggleVideo");
+          try {
+            jitsiApiRef.current.executeCommand("toggleVideo");
+          } catch {}
         }
       } catch (err) {
         console.warn("Could not access camera:", err);
@@ -153,10 +177,22 @@ export function useJitsi({
       }
       setIsCamMuted(true);
       if (jitsiApiRef.current) {
-        jitsiApiRef.current.executeCommand("toggleVideo");
+        try {
+          jitsiApiRef.current.executeCommand("toggleVideo");
+        } catch {}
       }
     }
   }, [isCamMuted, isMicMuted, localStream]);
+
+  // Stop Screen Sharing
+  const stopScreenShare = useCallback(() => {
+    if (screenStream) {
+      screenStream.getTracks().forEach((t) => t.stop());
+      setScreenStream(null);
+    }
+    setIsScreenSharing(false);
+    onScreenShareStoppedRef.current?.();
+  }, [screenStream]);
 
   // Start Screen Sharing via getDisplayMedia
   const startScreenShare = useCallback(async () => {
@@ -174,7 +210,7 @@ export function useJitsi({
 
       setScreenStream(stream);
       setIsScreenSharing(true);
-      onScreenShareStarted?.(stream);
+      onScreenShareStartedRef.current?.(stream);
 
       // Listen for when user clicks native "Stop sharing" chrome
       const track = stream.getVideoTracks()[0];
@@ -186,93 +222,26 @@ export function useJitsi({
     } catch (err) {
       console.warn("Screen share cancelled or failed:", err);
     }
-  }, [onScreenShareStarted]);
+  }, [stopScreenShare]);
 
-  // Stop Screen Sharing
-  const stopScreenShare = useCallback(() => {
-    if (screenStream) {
-      screenStream.getTracks().forEach((t) => t.stop());
-      setScreenStream(null);
-    }
-    setIsScreenSharing(false);
-    onScreenShareStopped?.();
-  }, [screenStream, onScreenShareStopped]);
-
-  // Optional Jitsi Meet External API integration in background
+  // Cleanup on unmount
   useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    const jitsiDomain = process.env.NEXT_PUBLIC_JITSI_DOMAIN || "meet.jit.si";
-    const jitsiRoomName = `WatchParty_${roomCode.toUpperCase()}`;
-
-    // Dynamically load external_api.js
-    const script = document.createElement("script");
-    script.src = `https://${jitsiDomain}/external_api.js`;
-    script.async = true;
-
-    script.onload = () => {
-      try {
-        const JitsiMeetExternalAPI = (window as any).JitsiMeetExternalAPI;
-        if (!JitsiMeetExternalAPI) return;
-
-        // Create container if not exists
-        let hiddenContainer = document.getElementById("jitsi-hidden-container");
-        if (!hiddenContainer) {
-          hiddenContainer = document.createElement("div");
-          hiddenContainer.id = "jitsi-hidden-container";
-          hiddenContainer.style.position = "fixed";
-          hiddenContainer.style.bottom = "-9999px";
-          hiddenContainer.style.left = "-9999px";
-          hiddenContainer.style.width = "1px";
-          hiddenContainer.style.height = "1px";
-          hiddenContainer.style.opacity = "0";
-          hiddenContainer.style.pointerEvents = "none";
-          document.body.appendChild(hiddenContainer);
-        }
-
-        const options = {
-          roomName: jitsiRoomName,
-          parentNode: hiddenContainer,
-          userInfo: {
-            displayName: userName,
-          },
-          configOverwrite: {
-            startWithAudioMuted: true,
-            startWithVideoMuted: true,
-            prejoinPageEnabled: false,
-            disableDeepLinking: true,
-          },
-          interfaceConfigOverwrite: {
-            TOOLBAR_BUTTONS: [],
-            SHOW_JITSI_WATERMARK: false,
-          },
-        };
-
-        const api = new JitsiMeetExternalAPI(jitsiDomain, options);
-        jitsiApiRef.current = api;
-
-        api.addEventListener("dominantSpeakerChanged", (e: any) => {
-          // If we are dominant speaker
-        });
-      } catch (e) {
-        console.warn("Jitsi Meet init note:", e);
-      }
-    };
-
-    document.body.appendChild(script);
-
     return () => {
       stopAudioMeter();
+      if (localStream) {
+        localStream.getTracks().forEach((t) => t.stop());
+      }
+      if (screenStream) {
+        screenStream.getTracks().forEach((t) => t.stop());
+      }
       if (jitsiApiRef.current) {
         try {
           jitsiApiRef.current.dispose();
         } catch {}
-      }
-      if (script.parentNode) {
-        script.parentNode.removeChild(script);
+        jitsiApiRef.current = null;
       }
     };
-  }, [roomCode, userName, stopAudioMeter]);
+  }, [stopAudioMeter, localStream, screenStream]);
 
   return {
     isMicMuted,
